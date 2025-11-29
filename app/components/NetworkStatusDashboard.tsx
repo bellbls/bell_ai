@@ -6,6 +6,35 @@ import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import { Edit, X, Check } from "lucide-react";
 
+// Define strict interfaces based on the Convex schema
+interface Network {
+    _id: Id<"blockchain_networks">;
+    network: string;
+    name: string;
+    chainId: number;
+    contractAddress?: string;
+    usdtAddress: string;
+    rpcUrl?: string;
+    isActive: boolean;
+    isPaused: boolean;
+    lowBalanceThreshold: number;
+    decimals: number;
+    blockExplorer: string;
+    createdAt: number;
+    updatedAt: number;
+    hotWalletBalance?: number;
+    lastBalanceCheck?: number;
+}
+
+interface NetworkBalance {
+    network: string;
+    name: string;
+    balance: number;
+    threshold: number;
+    isLow: boolean;
+    lastCheck?: number;
+}
+
 interface NetworkStatusProps {
     userId: Id<"users">;
     isAdmin: boolean;
@@ -18,7 +47,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
     const [editIsActive, setEditIsActive] = useState<boolean>(false);
     const [saving, setSaving] = useState(false);
 
-    // Queries
+    // Queries with explicit return types inferred from Convex
     const networks = useQuery(api.networkManagement.getAllNetworks, {});
     const balances = useQuery(api.networkManagement.getNetworkBalances, {});
     const unreadAlertsCount = useQuery(api.adminAlerts.getUnreadAlertsCount, {});
@@ -50,11 +79,11 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
         }
     };
 
-    const getNetworkBalance = (networkName: string) => {
-        return balances?.find((b: any) => b.network === networkName);
+    const getNetworkBalance = (networkName: string): NetworkBalance | undefined => {
+        return balances?.find((b: NetworkBalance) => b.network === networkName);
     };
 
-    const handleEditClick = (network: any) => {
+    const handleEditClick = (network: Network) => {
         setEditingNetwork(network.network);
         setEditContractAddress(network.contractAddress || "");
         setEditIsActive(network.isActive);
@@ -117,17 +146,19 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
 
             {/* Network Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {networks?.map((network) => {
-                    const balance = getNetworkBalance(network.network);
+                {networks?.map((network: any) => {
+                    // Cast to Network interface for safety inside map
+                    const typedNetwork = network as Network;
+                    const balance = getNetworkBalance(typedNetwork.network);
                     const isLow = balance?.isLow || false;
-                    const isPausing = pausingNetwork === network.network;
+                    const isPausing = pausingNetwork === typedNetwork.network;
 
                     return (
                         <div
-                            key={network.network}
-                            className={`bg-white rounded-xl shadow-sm border-2 transition-all ${network.isPaused
+                            key={typedNetwork.network}
+                            className={`bg-white rounded-xl shadow-sm border-2 transition-all ${typedNetwork.isPaused
                                 ? "border-yellow-300 bg-yellow-50"
-                                : network.isActive
+                                : typedNetwork.isActive
                                     ? "border-green-300"
                                     : "border-gray-200"
                                 }`}
@@ -137,30 +168,30 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                 <div className="flex items-center justify-between mb-4">
                                     <div className="flex items-center gap-3">
                                         <div
-                                            className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${network.network === "polygon"
+                                            className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${typedNetwork.network === "polygon"
                                                 ? "bg-purple-600"
-                                                : network.network === "bsc"
+                                                : typedNetwork.network === "bsc"
                                                     ? "bg-yellow-500"
                                                     : "bg-blue-600"
                                                 }`}
                                         >
-                                            {network.network === "polygon"
+                                            {typedNetwork.network === "polygon"
                                                 ? "P"
-                                                : network.network === "bsc"
+                                                : typedNetwork.network === "bsc"
                                                     ? "B"
                                                     : "A"}
                                         </div>
                                         <div>
                                             <h3 className="text-lg font-bold text-gray-900">
-                                                {network.name}
+                                                {typedNetwork.name}
                                             </h3>
                                             <p className="text-xs text-gray-500">
-                                                Chain ID: {network.chainId}
+                                                Chain ID: {typedNetwork.chainId}
                                             </p>
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-end gap-1">
-                                        {network.isActive ? (
+                                        {typedNetwork.isActive ? (
                                             <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
                                                 Active
                                             </span>
@@ -169,7 +200,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                                 Inactive
                                             </span>
                                         )}
-                                        {network.isPaused && (
+                                        {typedNetwork.isPaused && (
                                             <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-medium rounded-full">
                                                 Paused
                                             </span>
@@ -217,14 +248,14 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                     <div className="flex justify-between">
                                         <span className="text-gray-600">Contract</span>
                                         <span className="font-mono text-xs text-gray-900">
-                                            {network.contractAddress
-                                                ? `${network.contractAddress.substring(0, 6)}...${network.contractAddress.substring(38)}`
+                                            {typedNetwork.contractAddress
+                                                ? `${typedNetwork.contractAddress.substring(0, 6)}...${typedNetwork.contractAddress.substring(38)}`
                                                 : "Not deployed"}
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-gray-600">USDT Decimals</span>
-                                        <span className="font-medium text-gray-900">{network.decimals}</span>
+                                        <span className="font-medium text-gray-900">{typedNetwork.decimals}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-gray-600">RPC Status</span>
@@ -235,31 +266,31 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                 {/* Actions */}
                                 <div className="pt-4 space-y-2">
                                     <button
-                                        onClick={() => handleEditClick(network)}
+                                        onClick={() => handleEditClick(typedNetwork)}
                                         className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
                                     >
                                         <Edit className="w-4 h-4" />
                                         Edit Network
                                     </button>
-                                    {network.isActive && (
+                                    {typedNetwork.isActive && (
                                         <button
-                                            onClick={() => handlePauseToggle(network.network, network.isPaused)}
+                                            onClick={() => handlePauseToggle(typedNetwork.network, typedNetwork.isPaused)}
                                             disabled={isPausing}
-                                            className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${network.isPaused
+                                            className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${typedNetwork.isPaused
                                                 ? "bg-green-600 hover:bg-green-700 text-white"
                                                 : "bg-yellow-600 hover:bg-yellow-700 text-white"
                                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
                                         >
                                             {isPausing
                                                 ? "Processing..."
-                                                : network.isPaused
+                                                : typedNetwork.isPaused
                                                     ? "Resume Deposits"
                                                     : "Pause Deposits"}
                                         </button>
                                     )}
-                                    {network.contractAddress && (
+                                    {typedNetwork.contractAddress && (
                                         <a
-                                            href={`${network.blockExplorer}/address/${network.contractAddress}`}
+                                            href={`${typedNetwork.blockExplorer}/address/${typedNetwork.contractAddress}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             className="block w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-center transition-colors"
@@ -283,19 +314,19 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                     <div className="text-sm text-gray-600 mb-1">Active Networks</div>
                     <div className="text-2xl font-bold text-green-600">
-                        {networks?.filter((n: any) => n.isActive).length || 0}
+                        {networks?.filter((n: any) => (n as Network).isActive).length || 0}
                     </div>
                 </div>
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                     <div className="text-sm text-gray-600 mb-1">Total Balance</div>
                     <div className="text-2xl font-bold text-gray-900">
-                        ${balances?.reduce((sum, b) => sum + b.balance, 0).toFixed(2) || "0.00"}
+                        ${balances?.reduce((sum: number, b: any) => sum + ((b as NetworkBalance).balance || 0), 0).toFixed(2) || "0.00"}
                     </div>
                 </div>
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                     <div className="text-sm text-gray-600 mb-1">Low Balance Alerts</div>
                     <div className="text-2xl font-bold text-red-600">
-                        {balances?.filter((b: any) => b.isLow).length || 0}
+                        {balances?.filter((b: any) => (b as NetworkBalance).isLow).length || 0}
                     </div>
                 </div>
             </div>
@@ -306,7 +337,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                     <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Edit Network: {networks?.find((n: any) => n.network === editingNetwork)?.name}
+                                Edit Network: {networks?.find((n: any) => (n as Network).network === editingNetwork)?.name}
                             </h3>
                             <button
                                 onClick={handleCancelEdit}
