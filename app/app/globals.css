@@ -1,0 +1,347 @@
+@import "tailwindcss";
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
+}
+
+/* Theme Variables - Enhanced with better contrast and modern practices */
+:root {
+  /* Light Theme (default) - High contrast for accessibility */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-hover: #f8fafc;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --border-primary: #e2e8f0;
+  --border-secondary: #cbd5e0;
+  --border-focus: #6366f1;
+  --input-bg: #ffffff;
+  --input-border: #cbd5e0;
+  --input-focus: #6366f1;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --hover-bg: #f1f5f9;
+  --button-primary: #6366f1;
+  --button-primary-hover: #4f46e5;
+  --button-secondary: #f1f5f9;
+  --button-secondary-hover: #e2e8f0;
+  --button-text: #ffffff;
+  --button-text-secondary: #0f172a;
+  --accent-purple: #6366f1;
+  --accent-purple-hover: #4f46e5;
+  --accent-pink: #ec4899;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+.dark {
+  /* Dark Theme */
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --bg-card: #1e293b;
+  --bg-hover: #334155;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --text-muted: #64748b;
+  --border-primary: #334155;
+  --border-secondary: #475569;
+  --border-focus: #a855f7;
+  --input-bg: #1e293b;
+  --input-border: #334155;
+  --input-focus: #a855f7;
+  --card-bg: #1e293b;
+  --card-border: #334155;
+  --hover-bg: #334155;
+  --button-primary: #a855f7;
+  --button-primary-hover: #9333ea;
+  --button-secondary: #334155;
+  --button-secondary-hover: #475569;
+  --button-text: #ffffff;
+  --button-text-secondary: #f8fafc;
+  --accent-purple: #a855f7;
+  --accent-purple-hover: #9333ea;
+  --accent-pink: #ec4899;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.5);
+}
+
+.light {
+  /* Light Theme (explicit) - Same as root for consistency */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-hover: #f8fafc;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --border-primary: #e2e8f0;
+  --border-secondary: #cbd5e0;
+  --border-focus: #6366f1;
+  --input-bg: #ffffff;
+  --input-border: #cbd5e0;
+  --input-focus: #6366f1;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --hover-bg: #f1f5f9;
+  --button-primary: #6366f1;
+  --button-primary-hover: #4f46e5;
+  --button-secondary: #f1f5f9;
+  --button-secondary-hover: #e2e8f0;
+  --button-text: #ffffff;
+  --button-text-secondary: #0f172a;
+  --accent-purple: #6366f1;
+  --accent-purple-hover: #4f46e5;
+  --accent-pink: #ec4899;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Responsive Input Styles */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--input-border);
+  transition: all 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.dark input[type="text"]:focus,
+.dark input[type="email"]:focus,
+.dark input[type="password"]:focus,
+.dark input[type="number"]:focus,
+.dark textarea:focus,
+.dark select:focus {
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+}
+
+/* Mobile Responsive Utilities */
+@media (max-width: 640px) {
+  /* Ensure inputs don't overflow on mobile */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  textarea,
+  select {
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 0.75rem;
+    min-height: 44px; /* Better touch target */
+  }
+
+  /* Responsive containers */
+  .container-responsive {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  /* Responsive text */
+  .text-responsive {
+    font-size: 0.875rem;
+  }
+
+  /* Responsive spacing */
+  .space-responsive > * + * {
+    margin-top: 0.75rem;
+  }
+}
+
+/* Utility Classes for Theme-Aware Components */
+.bg-theme-primary {
+  background-color: var(--bg-primary);
+}
+
+.bg-theme-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.bg-theme-tertiary {
+  background-color: var(--bg-tertiary);
+}
+
+.bg-theme-card {
+  background-color: var(--bg-card);
+}
+
+.bg-theme-hover {
+  background-color: var(--bg-hover);
+}
+
+.text-theme-primary {
+  color: var(--text-primary);
+}
+
+.text-theme-secondary {
+  color: var(--text-secondary);
+}
+
+.text-theme-tertiary {
+  color: var(--text-tertiary);
+}
+
+.text-theme-muted {
+  color: var(--text-muted);
+}
+
+.border-theme-primary {
+  border-color: var(--border-primary);
+}
+
+.border-theme-secondary {
+  border-color: var(--border-secondary);
+}
+
+.border-theme-focus {
+  border-color: var(--border-focus);
+}
+
+.card-theme {
+  background-color: var(--card-bg);
+  border-color: var(--card-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-theme:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.input-theme {
+  background-color: var(--input-bg);
+  border-color: var(--input-border);
+  color: var(--text-primary);
+}
+
+.input-theme:focus {
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.dark .input-theme:focus {
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+}
+
+/* Button Theme Classes */
+.btn-theme-primary {
+  background-color: var(--button-primary);
+  color: var(--button-text);
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.btn-theme-primary:hover {
+  background-color: var(--button-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-theme-secondary {
+  background-color: var(--button-secondary);
+  color: var(--button-text-secondary);
+  border: 1px solid var(--border-primary);
+  transition: all 0.2s ease;
+}
+
+.btn-theme-secondary:hover {
+  background-color: var(--button-secondary-hover);
+  border-color: var(--border-secondary);
+}
+
+/* Enhanced text contrast utilities */
+.text-readable {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.text-readable-secondary {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* Card hover effects */
+.card-hover {
+  transition: all 0.2s ease;
+}
+
+.card-hover:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-secondary);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
