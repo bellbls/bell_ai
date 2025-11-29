@@ -51,7 +51,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
     };
 
     const getNetworkBalance = (networkName: string) => {
-        return balances?.find((b) => b.network === networkName);
+        return balances?.find((b: any) => b.network === networkName);
     };
 
     const handleEditClick = (network: any) => {
@@ -126,10 +126,10 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                         <div
                             key={network.network}
                             className={`bg-white rounded-xl shadow-sm border-2 transition-all ${network.isPaused
-                                    ? "border-yellow-300 bg-yellow-50"
-                                    : network.isActive
-                                        ? "border-green-300"
-                                        : "border-gray-200"
+                                ? "border-yellow-300 bg-yellow-50"
+                                : network.isActive
+                                    ? "border-green-300"
+                                    : "border-gray-200"
                                 }`}
                         >
                             {/* Header */}
@@ -138,10 +138,10 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                     <div className="flex items-center gap-3">
                                         <div
                                             className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${network.network === "polygon"
-                                                    ? "bg-purple-600"
-                                                    : network.network === "bsc"
-                                                        ? "bg-yellow-500"
-                                                        : "bg-blue-600"
+                                                ? "bg-purple-600"
+                                                : network.network === "bsc"
+                                                    ? "bg-yellow-500"
+                                                    : "bg-blue-600"
                                                 }`}
                                         >
                                             {network.network === "polygon"
@@ -246,8 +246,8 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                                             onClick={() => handlePauseToggle(network.network, network.isPaused)}
                                             disabled={isPausing}
                                             className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${network.isPaused
-                                                    ? "bg-green-600 hover:bg-green-700 text-white"
-                                                    : "bg-yellow-600 hover:bg-yellow-700 text-white"
+                                                ? "bg-green-600 hover:bg-green-700 text-white"
+                                                : "bg-yellow-600 hover:bg-yellow-700 text-white"
                                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
                                         >
                                             {isPausing
@@ -283,7 +283,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                     <div className="text-sm text-gray-600 mb-1">Active Networks</div>
                     <div className="text-2xl font-bold text-green-600">
-                        {networks?.filter((n) => n.isActive).length || 0}
+                        {networks?.filter((n: any) => n.isActive).length || 0}
                     </div>
                 </div>
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
@@ -295,7 +295,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                     <div className="text-sm text-gray-600 mb-1">Low Balance Alerts</div>
                     <div className="text-2xl font-bold text-red-600">
-                        {balances?.filter((b) => b.isLow).length || 0}
+                        {balances?.filter((b: any) => b.isLow).length || 0}
                     </div>
                 </div>
             </div>
@@ -306,7 +306,7 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
                     <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Edit Network: {networks?.find((n) => n.network === editingNetwork)?.name}
+                                Edit Network: {networks?.find((n: any) => n.network === editingNetwork)?.name}
                             </h3>
                             <button
                                 onClick={handleCancelEdit}
