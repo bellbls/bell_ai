@@ -98,7 +98,7 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                     {/* Notifications List */}
                     <div className="max-h-96 overflow-y-auto">
                         {notifications && notifications.length > 0 ? (
-                            notifications.map((notification) => (
+                            notifications.map((notification: any) => (
                                 <div
                                     key={notification._id}
                                     onClick={() => handleNotificationClick(notification._id)}
