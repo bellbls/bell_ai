@@ -494,6 +494,8 @@ export default function Home() {
               toast={toast}
               userProfile={userProfile}
               pauseStates={pauseStates}
+              setActiveTab={setActiveTab}
+              setSidebarOpen={setSidebarOpen}
             />
           )}
 
@@ -575,7 +577,7 @@ function StatsCard({ title, value, icon, trend, color }: { title: string, value:
   );
 }
 
-function StakingView({ stakingCycles, stakes, handleStake, toast, userProfile, pauseStates }: any) {
+function StakingView({ stakingCycles, stakes, handleStake, toast, userProfile, pauseStates, setActiveTab, setSidebarOpen }: any) {
   const [stakeModalOpen, setStakeModalOpen] = useState(false);
   const [selectedCycle, setSelectedCycle] = useState<any>(null);
 
@@ -606,10 +608,19 @@ function StakingView({ stakingCycles, stakes, handleStake, toast, userProfile, p
               <Lock className="w-6 h-6 text-red-400" />
             </div>
             <div className="flex-1">
-              <h3 className="text-lg font-bold text-red-400">Staking Temporarily Paused</h3>
+              <h3 className="text-lg font-bold text-red-400">Staking Not Yet Live</h3>
               <p className="text-sm text-slate-400 mt-1">
-                New stakes cannot be created at this time due to system maintenance. Existing stakes continue to earn normally.
-                You will be notified when staking resumes.
+                Staking will officially open soon. Please wait for the official announcement.
+                In the meantime, node presales are active, secure your node early before launch.
+                <span className="block mt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab("presale"); setSidebarOpen(false); }}
+                    className="text-indigo-500 underline font-bold"
+                  >
+                    BUY NOW
+                  </button>
+                </span>
               </p>
             </div>
           </div>
@@ -739,6 +750,12 @@ function WalletView({ userProfile, transactions, requestWithdrawal, deposit, use
 
   const isBLSEnabled = blsConfig?.isEnabled || false;
   const currentBLSBalance = blsBalance?.blsBalance || 0;
+  
+  // Helper function to format balance and prevent -0.00 display
+  const formatBLSBalance = (balance: number): string => {
+    const normalized = balance === 0 || Object.is(balance, -0) ? 0 : balance;
+    return normalized.toFixed(2);
+  };
 
   const handleDepositConfirm = async (amount: number) => {
     if (!userId) return;
@@ -819,7 +836,7 @@ function WalletView({ userProfile, transactions, requestWithdrawal, deposit, use
               </div>
               <div className="text-right">
                 <div className="text-2xl font-bold text-purple-500 dark:text-purple-300 light:text-indigo-600">
-                  {currentBLSBalance.toFixed(2)} <span className="text-lg">BLS</span>
+                  {formatBLSBalance(currentBLSBalance)} <span className="text-lg">BLS</span>
                 </div>
                 <button
                   onClick={() => setActiveTab("swap")}
@@ -1073,11 +1090,17 @@ function EarningsView({ userEarnings, blsConfig }: any) {
 
   const isBLSEnabled = blsConfig?.isEnabled || false;
 
+  // Helper function to format amount and prevent -0.00 display
+  const formatAmountHelper = (amount: number): string => {
+    const normalized = amount === 0 || Object.is(amount, -0) ? 0 : amount;
+    return normalized.toFixed(2);
+  };
+  
   const formatAmount = (amount: number) => {
     if (isBLSEnabled) {
-      return `${amount.toFixed(2)} BLS`;
+      return `${formatAmountHelper(amount)} BLS`;
     }
-    return `$${amount.toFixed(2)}`;
+    return `$${formatAmountHelper(amount)}`;
   };
 
   const { summary, recent } = userEarnings;

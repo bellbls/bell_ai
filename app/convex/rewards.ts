@@ -406,11 +406,17 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
 /**
  * Legacy function - kept for backward compatibility
  * Use distributeReferralBonuses and distributeVRankBonuses instead
+ * 
+ * FIXED: Now respects BLS system when enabled
  */
 async function distributeCommissions(ctx: any, stakerId: any, yieldAmount: number, now: number, stakeId: any) {
     let currentUserId = stakerId;
     let level = 1;
     const MAX_LEVELS = 7; // Configurable
+
+    // Check if BLS system is enabled
+    const blsConfig = await ctx.db.query("blsConfig").first();
+    const isBLSEnabled = blsConfig?.isEnabled || false;
 
     while (level <= MAX_LEVELS) {
         const user = await ctx.db.get(currentUserId);
@@ -425,16 +431,28 @@ async function distributeCommissions(ctx: any, stakerId: any, yieldAmount: numbe
         if (rate > 0) {
             const commission = (yieldAmount * rate) / 100;
 
-            await ctx.db.insert("transactions", {
-                userId: referrer._id,
-                amount: commission,
-                type: level === 1 ? "commission_direct" : "commission_indirect",
-                referenceId: stakeId,
-                description: `L${level} Commission from ${user.name}`,
-                timestamp: now,
-            });
+            if (isBLSEnabled) {
+                // Credit BLS instead of USDT when BLS system is enabled
+                await ctx.runMutation(internal.bls.creditBLS, {
+                    userId: referrer._id,
+                    amount: commission,
+                    description: `L${level} Commission from ${user.name}`,
+                    referenceId: stakeId,
+                    transactionType: level === 1 ? "commission_direct" : "commission_indirect",
+                });
+            } else {
+                // Credit USDT directly when BLS system is disabled
+                await ctx.db.insert("transactions", {
+                    userId: referrer._id,
+                    amount: commission,
+                    type: level === 1 ? "commission_direct" : "commission_indirect",
+                    referenceId: stakeId,
+                    description: `L${level} Commission from ${user.name}`,
+                    timestamp: now,
+                });
 
-            await ctx.db.patch(referrer._id, { walletBalance: (referrer.walletBalance || 0) + commission });
+                await ctx.db.patch(referrer._id, { walletBalance: (referrer.walletBalance || 0) + commission });
+            }
         }
 
         currentUserId = referrer._id;

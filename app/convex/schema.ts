@@ -130,6 +130,10 @@ export default defineSchema({
     executionError: v.optional(v.string()),    // Error if tx failed
     retryAttempts: v.optional(v.number()),     // Number of retry attempts
     approvedBy: v.optional(v.string()),        // Admin wallet address who approved
+    withdrawalSource: v.optional(v.union(      // Track source of withdrawal for audit
+      v.literal("bls_swapped"),                // USDT from BLS swaps
+      v.literal("direct_usdt")                 // Direct USDT (when BLS disabled)
+    )),
   })
     .index("by_status", ["status"])
     .index("by_userId", ["userId"])

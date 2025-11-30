@@ -1,6 +1,7 @@
-import { mutation, query } from "./_generated/server";
-import { v } from "convex/values";
+import { mutation, query, internalMutation } from "./_generated/server";
+import { v, Id } from "convex/values";
 import { createError, ErrorCodes, isValidAmount } from "./errors";
+import { internal } from "./_generated/api";
 
 // ==================== DEPOSIT ====================
 
@@ -102,6 +103,23 @@ export const requestWithdrawal = mutation({
             throw createError(ErrorCodes.USER_NOT_FOUND);
         }
 
+        // Check BLS system status
+        const blsConfig = await ctx.db.query("blsConfig").first();
+        const isBLSEnabled = blsConfig?.isEnabled || false;
+
+        if (isBLSEnabled) {
+            // When BLS is enabled, withdrawals should only come from swapped BLS
+            // Check if user has sufficient USDT from BLS swaps
+            const swappedUSDT = await getUserSwappedUSDTBalance(ctx, args.userId);
+            
+            if (swappedUSDT < args.amount) {
+                throw createError(
+                    ErrorCodes.INSUFFICIENT_BALANCE,
+                    `Insufficient swapped BLS balance. You have $${swappedUSDT.toFixed(2)} available to withdraw. Please swap your BLS to USDT first.`
+                );
+            }
+        }
+
         // Check balance
         if ((user.walletBalance || 0) < args.amount) {
             throw createError(ErrorCodes.INSUFFICIENT_BALANCE);
@@ -131,6 +149,7 @@ export const requestWithdrawal = mutation({
             address: args.address.trim(),
             status: "pending",
             requestDate: Date.now(),
+            withdrawalSource: isBLSEnabled ? "bls_swapped" : "direct_usdt", // Track withdrawal source for audit
         });
 
         // Log Transaction
@@ -356,6 +375,19 @@ export const getTransactionHistory = query({
     },
 });
 
+/**
+ * Get user's available USDT balance from BLS swaps (for withdrawals when BLS enabled)
+ */
+export const getSwappedUSDTBalance = query({
+    args: { userId: v.id("users") },
+    handler: async (ctx, args) => {
+        const swappedBalance = await getUserSwappedUSDTBalance(ctx, args.userId);
+        return {
+            swappedUSDTBalance: swappedBalance,
+        };
+    },
+});
+
 export const getApprovedWithdrawals = query({
     args: {},
     handler: async (ctx) => {
@@ -453,6 +485,45 @@ export const createWithdrawalNotification = mutation({
  * Log withdrawal processing error
  * Internal - called by withdrawal executer
  */
+/**
+ * Calculate user's USDT balance that came from BLS swaps
+ * Used to validate withdrawals when BLS system is enabled
+ */
+async function getUserSwappedUSDTBalance(ctx: any, userId: Id<"users">): Promise<number> {
+    // Get all completed BLS swap requests for this user
+    const swapRequests = await ctx.db
+        .query("blsSwapRequests")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .filter((q) => q.eq(q.field("status"), "completed"))
+        .collect();
+    
+    // Sum up all USDT amounts from completed swaps
+    let swappedTotal = swapRequests.reduce((sum, swap) => sum + (swap.usdtAmount || 0), 0);
+    
+    // Subtract any withdrawals that came from swapped USDT
+    const withdrawals = await ctx.db
+        .query("withdrawals")
+        .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+        .filter((q: any) => 
+            q.or(
+                q.eq(q.field("status"), "sent"),
+                q.eq(q.field("status"), "completed"),
+                q.eq(q.field("status"), "approved")
+            )
+        )
+        .collect();
+    
+    // Subtract withdrawals that used swapped USDT
+    for (const withdrawal of withdrawals) {
+        const withdrawalSource = (withdrawal as any).withdrawalSource;
+        if (withdrawalSource === "bls_swapped") {
+            swappedTotal -= withdrawal.amount || 0;
+        }
+    }
+    
+    return Math.max(0, swappedTotal); // Don't return negative
+}
+
 export const logWithdrawalError = mutation({
     args: {
         withdrawalId: v.id("withdrawals"),

@@ -25,20 +25,22 @@ export interface NetworkContractConfig {
 }
 
 // Contract addresses for each network
+// NOTE: After deploying to testnet, update vaultAddress with the deployed contract address
+// See TESTNET_DEPLOYMENT_GUIDE.md for deployment instructions
 export const NETWORK_CONTRACTS: Record<string, NetworkContractConfig> = {
     polygon: {
-        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update after deployment
-        usdtAddress: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", // USDT on Polygon
+        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update with deployed testnet address
+        usdtAddress: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", // USDT on Polygon Mainnet
         decimals: 6,
     },
     bsc: {
-        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update after deployment
-        usdtAddress: "0x55d398326f99059fF775485246999027B3197955", // USDT on BSC
+        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update with deployed testnet address
+        usdtAddress: "0x55d398326f99059fF775485246999027B3197955", // USDT on BSC Mainnet
         decimals: 18,
     },
     arbitrum: {
-        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update after deployment
-        usdtAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", // USDT on Arbitrum
+        vaultAddress: "0x0000000000000000000000000000000000000000", // TODO: Update with deployed testnet address
+        usdtAddress: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", // USDT on Arbitrum Mainnet
         decimals: 6,
     },
 };

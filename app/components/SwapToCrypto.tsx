@@ -25,31 +25,62 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
     // Mutations
     const swapBLSToUSDT = useMutation(api.bls.swapBLSToUSDT);
 
+    // Check if queries are still loading
+    const isLoading = blsConfig === undefined || blsBalance === undefined || userProfile === undefined;
+    
     const isBLSEnabled = blsConfig?.isEnabled || false;
     const currentBLSBalance = blsBalance?.blsBalance || 0;
     const currentUSDTBalance = userProfile?.walletBalance || 0;
     const conversionRate = blsConfig?.conversionRate || 1.0;
     const minSwapAmount = blsConfig?.minSwapAmount || 1.0;
+    
+    // Helper function to format balance and prevent -0.00 display
+    const formatBLSBalance = (balance: number): string => {
+        const normalized = balance === 0 || Object.is(balance, -0) ? 0 : balance;
+        return normalized.toFixed(2);
+    };
 
+    // Helper function to round currency amounts to 2 decimal places for safe comparison
+    const roundToTwoDecimals = (value: number): number => {
+        return Math.round(value * 100) / 100;
+    };
+
+    // Helper function to safely compare if amount exceeds balance (accounting for floating-point precision)
+    const exceedsBalance = (amount: number, balance: number): boolean => {
+        const roundedAmount = roundToTwoDecimals(amount);
+        const roundedBalance = roundToTwoDecimals(balance);
+        return roundedAmount > roundedBalance;
+    };
+
+    // Parse swap amount safely
+    const parsedSwapAmount = swapAmount ? parseFloat(swapAmount) : 0;
+    const isValidSwapAmount = !isNaN(parsedSwapAmount) && parsedSwapAmount > 0;
+    
     // Calculate USDT amount based on swap amount
-    const usdtAmount = swapAmount ? parseFloat(swapAmount) * conversionRate : 0;
+    const usdtAmount = isValidSwapAmount ? parsedSwapAmount * conversionRate : 0;
+    
+    // Determine if swap is allowed (using safe floating-point comparison)
+    const canSwap = isValidSwapAmount && 
+                    parsedSwapAmount >= minSwapAmount && 
+                    !exceedsBalance(parsedSwapAmount, currentBLSBalance);
 
     // Handle swap
     const handleSwap = async () => {
-        if (!swapAmount || parseFloat(swapAmount) <= 0) {
+        if (!swapAmount || !isValidSwapAmount) {
             toast.error("Please enter a valid swap amount");
             return;
         }
 
-        const amount = parseFloat(swapAmount);
+        const amount = parsedSwapAmount;
 
         if (amount < minSwapAmount) {
             toast.error(`Minimum swap amount is ${minSwapAmount} BLS`);
             return;
         }
 
-        if (amount > currentBLSBalance) {
-            toast.error("Insufficient BLS balance");
+        // Use safe floating-point comparison
+        if (exceedsBalance(amount, currentBLSBalance)) {
+            toast.error(`Insufficient BLS balance. You have ${formatBLSBalance(currentBLSBalance)} BLS`);
             return;
         }
 
@@ -60,10 +91,17 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
                 blsAmount: amount,
             });
 
-            toast.success(result.message || "Swap completed successfully!");
-            setSwapAmount("");
+            if (result.success) {
+                toast.success(result.message || "Swap completed successfully!");
+                setSwapAmount("");
+            } else {
+                toast.error(result.message || "Swap failed. Please try again.");
+            }
         } catch (error: any) {
-            toast.error(error.message || "Swap failed. Please try again.");
+            console.error("Swap error:", error);
+            // Extract error message from various error formats
+            const errorMessage = error?.message || error?.toString() || "Swap failed. Please try again.";
+            toast.error(errorMessage);
         } finally {
             setIsSwapping(false);
         }
@@ -71,8 +109,19 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
 
     // Set max amount
     const setMaxAmount = () => {
-        setSwapAmount(currentBLSBalance.toFixed(2));
+        setSwapAmount(formatBLSBalance(currentBLSBalance));
     };
+
+    // Show loading state
+    if (isLoading) {
+        return (
+            <div className="p-8 bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 text-center">
+                <Loader2 className="w-12 h-12 text-slate-500 mx-auto mb-4 animate-spin" />
+                <h3 className="text-xl font-bold text-slate-400 mb-2">Loading Swap Information...</h3>
+                <p className="text-slate-500">Please wait while we load your balance and swap settings.</p>
+            </div>
+        );
+    }
 
     if (!isBLSEnabled) {
         return (
@@ -110,7 +159,7 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
                         </div>
                     </div>
                     <div className="text-3xl font-bold mb-2">
-                        {currentBLSBalance.toFixed(2)} <span className="text-lg text-purple-300">BLS</span>
+                        {formatBLSBalance(currentBLSBalance)} <span className="text-lg text-purple-300">BLS</span>
                     </div>
                     <div className="text-sm text-purple-300/70">
                         BellCoin Stable (Off-chain Points)
@@ -178,12 +227,12 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
                             </button>
                         </div>
                         <div className="mt-2 text-xs text-slate-500">
-                            Available: {currentBLSBalance.toFixed(2)} BLS
+                            Available: {formatBLSBalance(currentBLSBalance)} BLS
                         </div>
                     </div>
 
                     {/* USDT Amount Preview */}
-                    {swapAmount && parseFloat(swapAmount) > 0 && (
+                    {swapAmount && isValidSwapAmount && parsedSwapAmount > 0 && (
                         <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
                             <div className="flex items-center justify-between">
                                 <span className="text-sm text-emerald-300">You will receive</span>
@@ -194,30 +243,70 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
                         </div>
                     )}
 
+                    {/* Validation Messages */}
+                    {swapAmount && (
+                        <div className="space-y-1">
+                            {!isValidSwapAmount && swapAmount.trim() !== "" && (
+                                <p className="text-sm text-red-400">
+                                    Please enter a valid number
+                                </p>
+                            )}
+                            {isValidSwapAmount && parsedSwapAmount < minSwapAmount && (
+                                <p className="text-sm text-yellow-400">
+                                    Minimum swap amount is {minSwapAmount} BLS
+                                </p>
+                            )}
+                            {isValidSwapAmount && exceedsBalance(parsedSwapAmount, currentBLSBalance) && (
+                                <p className="text-sm text-red-400">
+                                    Amount exceeds your BLS balance of {formatBLSBalance(currentBLSBalance)} BLS
+                                </p>
+                            )}
+                            {canSwap && !isSwapping && (
+                                <p className="text-sm text-emerald-400">
+                                    ✓ Ready to swap
+                                </p>
+                            )}
+                        </div>
+                    )}
+
                     {/* Swap Button */}
                     <button
                         onClick={handleSwap}
-                        disabled={
-                            isSwapping ||
-                            !swapAmount ||
-                            parseFloat(swapAmount) < minSwapAmount ||
-                            parseFloat(swapAmount) > currentBLSBalance ||
-                            parseFloat(swapAmount) <= 0
+                        disabled={isSwapping || !canSwap}
+                        title={
+                            !swapAmount
+                                ? "Enter a swap amount"
+                                : !isValidSwapAmount
+                                ? "Enter a valid number"
+                                : parsedSwapAmount < minSwapAmount
+                                ? `Minimum swap amount is ${minSwapAmount} BLS`
+                                : exceedsBalance(parsedSwapAmount, currentBLSBalance)
+                                ? `Amount exceeds your balance of ${formatBLSBalance(currentBLSBalance)} BLS`
+                                : ""
                         }
                         className={`w-full py-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
-                            isSwapping ||
-                            !swapAmount ||
-                            parseFloat(swapAmount) < minSwapAmount ||
-                            parseFloat(swapAmount) > currentBLSBalance ||
-                            parseFloat(swapAmount) <= 0
+                            isSwapping || !canSwap
                                 ? "bg-slate-700 text-slate-400 cursor-not-allowed"
-                                : "bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white shadow-lg shadow-purple-500/50"
+                                : "bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white shadow-lg shadow-purple-500/50 hover:scale-105"
                         }`}
                     >
                         {isSwapping ? (
                             <>
                                 <Loader2 className="w-5 h-5 animate-spin" />
                                 Swapping...
+                            </>
+                        ) : !canSwap ? (
+                            <>
+                                <AlertCircle className="w-5 h-5" />
+                                {!swapAmount
+                                    ? "Enter Amount to Swap"
+                                    : !isValidSwapAmount
+                                    ? "Invalid Amount"
+                                    : parsedSwapAmount < minSwapAmount
+                                    ? `Minimum: ${minSwapAmount} BLS`
+                                    : exceedsBalance(parsedSwapAmount, currentBLSBalance)
+                                    ? "Insufficient Balance"
+                                    : "Cannot Swap"}
                             </>
                         ) : (
                             <>

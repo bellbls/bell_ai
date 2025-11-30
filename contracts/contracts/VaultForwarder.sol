@@ -25,7 +25,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * 
  * Configuration:
  * - Cold Wallet: 0x074828a9a07f800d1da5836fe3140c6701d41b11
- * - Hot Wallet: 0xf2d20feae8625fd124e7b39aa4cc8cd8f004ebc3
+ * - Hot Wallet: 0xDe9555F5b9BfeCF7f97954bFcb41c550b47b89fc
  * - Hot Wallet %: 2.5%
  */
 contract VaultForwarder is Ownable, Pausable, ReentrancyGuard {

@@ -9,6 +9,27 @@ import { notify } from "./notifications";
  * Users can swap BLS to USDT instantly
  */
 
+// ==================== HELPER FUNCTIONS ====================
+
+/**
+ * Helper function to round currency amounts to 2 decimal places for safe comparison
+ */
+function roundToTwoDecimals(value: number): number {
+    return Math.round(value * 100) / 100;
+}
+
+/**
+ * Helper function to safely check if balance is sufficient (accounting for floating-point precision)
+ * Uses epsilon tolerance to handle floating-point precision issues
+ */
+function hasSufficientBalance(balance: number, amount: number): boolean {
+    const EPSILON = 0.001; // Allow 0.001 BLS tolerance for floating-point precision
+    const roundedBalance = roundToTwoDecimals(balance);
+    const roundedAmount = roundToTwoDecimals(amount);
+    // Check if balance is sufficient with epsilon tolerance
+    return roundedBalance + EPSILON >= roundedAmount;
+}
+
 // ==================== CONFIGURATION ====================
 
 /**
@@ -244,7 +265,7 @@ export const deductBLS = internalMutation({
         }
 
         const currentBalance = user.blsBalance || 0;
-        if (currentBalance < args.amount) {
+        if (!hasSufficientBalance(currentBalance, args.amount)) {
             throw createError(ErrorCodes.INSUFFICIENT_BALANCE, "Insufficient BLS balance");
         }
 
@@ -276,8 +297,11 @@ export const swapBLSToUSDT = mutation({
 
         // Check if BLS system is enabled
         const config = await ctx.db.query("blsConfig").first();
-        if (!config || !config.isEnabled) {
-            throw createError(ErrorCodes.VALIDATION_ERROR, "BLS system is not enabled");
+        if (!config) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "BLS system is not configured. Please contact support.");
+        }
+        if (!config.isEnabled) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "BLS system is currently disabled. Swapping is not available.");
         }
 
         // Check minimum swap amount
@@ -294,13 +318,22 @@ export const swapBLSToUSDT = mutation({
             throw createError(ErrorCodes.USER_NOT_FOUND);
         }
 
-        // Check BLS balance
+        // Check BLS balance using safe floating-point comparison
         const currentBLSBalance = user.blsBalance || 0;
-        if (currentBLSBalance < args.blsAmount) {
-            throw createError(ErrorCodes.INSUFFICIENT_BALANCE, "Insufficient BLS balance");
+        if (!hasSufficientBalance(currentBLSBalance, args.blsAmount)) {
+            // Enhanced error message with detailed values for debugging
+            const roundedBalance = roundToTwoDecimals(currentBLSBalance);
+            const roundedAmount = roundToTwoDecimals(args.blsAmount);
+            throw createError(
+                ErrorCodes.INSUFFICIENT_BALANCE, 
+                `Insufficient BLS balance. Balance: ${currentBLSBalance.toFixed(6)} (rounded: ${roundedBalance.toFixed(2)}), Amount: ${args.blsAmount.toFixed(6)} (rounded: ${roundedAmount.toFixed(2)})`
+            );
         }
 
-        // Calculate USDT amount
+        // Calculate USDT amount (ensure conversion rate is valid)
+        if (!config.conversionRate || config.conversionRate <= 0) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Invalid conversion rate configured. Please contact support.");
+        }
         const usdtAmount = args.blsAmount * config.conversionRate;
 
         // Deduct BLS
@@ -324,12 +357,15 @@ export const swapBLSToUSDT = mutation({
             completedAt: Date.now(),
         });
 
+        // Convert swapRequestId to string for referenceId field
+        const swapRequestIdString = swapRequestId.toString();
+
         // Log BLS deduction transaction
         await ctx.db.insert("transactions", {
             userId: args.userId,
             amount: -args.blsAmount,
             type: "bls_swap",
-            referenceId: swapRequestId,
+            referenceId: swapRequestIdString,
             description: `Swapped ${args.blsAmount.toFixed(2)} BLS to ${usdtAmount.toFixed(2)} USDT`,
             timestamp: Date.now(),
         });
@@ -339,7 +375,7 @@ export const swapBLSToUSDT = mutation({
             userId: args.userId,
             amount: usdtAmount,
             type: "deposit",
-            referenceId: swapRequestId,
+            referenceId: swapRequestIdString,
             description: `Received ${usdtAmount.toFixed(2)} USDT from BLS swap`,
             timestamp: Date.now(),
         });
@@ -384,6 +420,36 @@ export const getSwapHistory = query({
             .collect();
 
         return swaps;
+    },
+});
+
+/**
+ * Diagnostic query to check swap readiness for a user
+ * Helps identify why swaps might be failing
+ */
+export const checkSwapReadiness = query({
+    args: { userId: v.id("users") },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        const config = await ctx.db.query("blsConfig").first();
+
+        return {
+            userExists: !!user,
+            userHasBLSBalance: (user?.blsBalance || 0) > 0,
+            blsBalance: user?.blsBalance || 0,
+            blsSystemExists: !!config,
+            blsSystemEnabled: config?.isEnabled || false,
+            conversionRate: config?.conversionRate || null,
+            minSwapAmount: config?.minSwapAmount || null,
+            canSwap: !!(config?.isEnabled && (user?.blsBalance || 0) > 0 && config?.conversionRate > 0),
+            issues: [
+                !user && "User not found",
+                !config && "BLS system not configured",
+                config && !config.isEnabled && "BLS system is disabled",
+                (user?.blsBalance || 0) === 0 && "User has no BLS balance",
+                config && (!config.conversionRate || config.conversionRate <= 0) && "Invalid conversion rate",
+            ].filter(Boolean),
+        };
     },
 });
 

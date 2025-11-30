@@ -30,6 +30,19 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     // Fetch saved addresses
     const savedAddresses = useQuery(api.addressBook.getAddresses, userId ? { userId: userId as any } : "skip");
 
+    // Fetch BLS config to check if BLS system is enabled
+    const blsConfig = useQuery(api.bls.getBLSConfig);
+    const isBLSEnabled = blsConfig?.isEnabled || false;
+
+    // Fetch swapped USDT balance (for withdrawals when BLS enabled)
+    const swappedUSDTBalance = useQuery(
+        api.wallet.getSwappedUSDTBalance,
+        userId ? { userId: userId as any } : "skip"
+    );
+    const availableWithdrawalBalance = isBLSEnabled
+        ? (swappedUSDTBalance?.swappedUSDTBalance || 0)
+        : walletBalance;
+
     // Filter for unlocked addresses
     const activeAddresses = savedAddresses?.filter((addr: any) => addr.isReady) || [];
 
@@ -45,7 +58,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const parsedAmount = parseFloat(amount);
-        if (parsedAmount >= MIN_WITHDRAW_AMOUNT && parsedAmount <= walletBalance && selectedAddress) {
+        if (parsedAmount >= MIN_WITHDRAW_AMOUNT && parsedAmount <= availableWithdrawalBalance && selectedAddress) {
             onConfirm(parsedAmount, selectedAddress, network);  // Pass network
             setAmount("");
             onClose();
@@ -56,8 +69,9 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const fee = parsedAmount * (feePercentage / 100);
     const netAmount = parsedAmount - fee;
     const isBelowMinimum = parsedAmount > 0 && parsedAmount < MIN_WITHDRAW_AMOUNT;
-    const isOverBalance = parsedAmount > walletBalance;
+    const isOverBalance = parsedAmount > availableWithdrawalBalance;
     const noActiveAddresses = !savedAddresses || activeAddresses.length === 0;
+    const noSwappedUSDT = isBLSEnabled && availableWithdrawalBalance === 0;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -91,13 +105,35 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
                 {/* Body */}
                 <form onSubmit={handleSubmit} className="p-6 space-y-6">
                     {/* Wallet Balance Display */}
-                    <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <Wallet className="w-5 h-5 text-emerald-400" />
-                            <span className="text-sm text-emerald-300 font-medium">Available Balance</span>
+                    <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                                <Wallet className="w-5 h-5 text-emerald-400" />
+                                <span className="text-sm text-emerald-300 font-medium">
+                                    {isBLSEnabled ? "Available for Withdrawal (Swapped BLS)" : "Available Balance"}
+                                </span>
+                            </div>
+                            <span className="text-lg font-bold text-emerald-400">${availableWithdrawalBalance.toFixed(2)}</span>
                         </div>
-                        <span className="text-lg font-bold text-emerald-400">${walletBalance.toFixed(2)}</span>
+                        {isBLSEnabled && walletBalance > availableWithdrawalBalance && (
+                            <p className="text-xs text-emerald-200/70 mt-1">
+                                Total USDT: ${walletBalance.toFixed(2)} (${(walletBalance - availableWithdrawalBalance).toFixed(2)} not from BLS swaps)
+                            </p>
+                        )}
                     </div>
+
+                    {/* BLS Warning */}
+                    {noSwappedUSDT && (
+                        <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-start gap-3">
+                            <AlertTriangle className="w-5 h-5 text-yellow-400 shrink-0" />
+                            <div>
+                                <h4 className="text-sm font-bold text-yellow-400 mb-1">No Swapped BLS Available</h4>
+                                <p className="text-xs text-yellow-200 mb-2">
+                                    When BLS system is enabled, you can only withdraw USDT that came from swapping your BLS. Please swap your BLS to USDT first.
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
                     {noActiveAddresses ? (
                         <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-start gap-3">
@@ -181,7 +217,11 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
                                     required
                                 />
                                 {isOverBalance && (
-                                    <p className="text-red-400 text-sm mt-2">Amount exceeds available balance</p>
+                                    <p className="text-red-400 text-sm mt-2">
+                                        {isBLSEnabled
+                                            ? "Amount exceeds available swapped BLS balance. Please swap more BLS to USDT first."
+                                            : "Amount exceeds available balance"}
+                                    </p>
                                 )}
                                 {isBelowMinimum && (
                                     <p className="text-red-400 text-sm mt-2">
