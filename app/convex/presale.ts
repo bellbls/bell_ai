@@ -203,6 +203,28 @@ export const purchaseNode = mutation({
             timestamp: now,
         });
 
+        // F. Create Notification
+        try {
+            await ctx.db.insert("notifications", {
+                userId: userId,
+                type: "system" as const,
+                title: "Node Purchase Successful",
+                message: `You successfully purchased ${quantity} node${quantity > 1 ? 's' : ''} for $${totalCost.toFixed(2)}. Your nodes will be converted to stakes when staking goes live.`,
+                icon: "Rocket",
+                data: {
+                    orderId: orderId.toString(),
+                    quantity,
+                    totalAmount: totalCost,
+                    pricePerNode: config.pricePerNode,
+                },
+                read: false,
+                createdAt: now,
+            });
+        } catch (notificationError) {
+            // Log error but don't fail the purchase if notification fails
+            console.error("Failed to create purchase notification:", notificationError);
+        }
+
         return { orderId, success: true };
     },
 });

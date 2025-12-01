@@ -117,6 +117,7 @@ export const initializeDefaultConfigs = mutation({
             { key: "max_withdrawal_amount", value: 100000 },
             { key: "staking_paused", value: false },
             { key: "withdrawals_paused", value: false },
+            { key: "referral_bonuses_enabled", value: false },
         ];
 
         for (const config of defaults) {
@@ -223,6 +224,50 @@ export const toggleWithdrawalsPause = mutation({
 });
 
 /**
+ * Toggle referral bonuses state
+ */
+export const toggleReferralBonuses = mutation({
+    args: {},
+    handler: async (ctx) => {
+        const existing = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "referral_bonuses_enabled"))
+            .first();
+
+        const newState = !existing?.value;
+
+        if (existing) {
+            await ctx.db.patch(existing._id, { value: newState });
+        } else {
+            await ctx.db.insert("configs", {
+                key: "referral_bonuses_enabled",
+                value: newState,
+            });
+        }
+
+        // Create system notification for all users
+        const users = await ctx.db.query("users").collect();
+        const now = Date.now();
+
+        for (const user of users) {
+            await ctx.db.insert("notifications", {
+                userId: user._id,
+                type: "system",
+                title: newState ? "✅ Referral Bonuses Enabled" : "🔒 Referral Bonuses Disabled",
+                message: newState 
+                    ? "L1 and L2 referral bonuses have been enabled. You can now earn commissions from your referral network."
+                    : "L1 and L2 referral bonuses have been disabled. Unilevel commissions continue to be available.",
+                icon: newState ? "✅" : "🔒",
+                read: false,
+                createdAt: now,
+            });
+        }
+
+        return { success: true, isEnabled: newState };
+    },
+});
+
+/**
  * Get system pause states
  */
 export const getSystemPauseStates = query({
@@ -238,9 +283,15 @@ export const getSystemPauseStates = query({
             .withIndex("by_key", (q) => q.eq("key", "withdrawals_paused"))
             .first();
 
+        const referralBonusesEnabled = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "referral_bonuses_enabled"))
+            .first();
+
         return {
             stakingPaused: stakingPaused?.value ?? false,
             withdrawalsPaused: withdrawalsPaused?.value ?? false,
+            referralBonusesEnabled: referralBonusesEnabled?.value ?? false,
         };
     },
 });

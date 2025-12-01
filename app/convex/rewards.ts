@@ -167,6 +167,19 @@ export const distributeDailyRewards = mutation({
  * L2 (Indirect Referral): 10% of referral stake yield
  */
 async function distributeReferralBonuses(ctx: any, stakerId: any, yieldAmount: number, now: number, stakeId: any): Promise<number> {
+    // Check if referral bonuses are enabled
+    const referralBonusesConfig = await ctx.db
+        .query("configs")
+        .withIndex("by_key", (q) => q.eq("key", "referral_bonuses_enabled"))
+        .first();
+
+    const isReferralBonusesEnabled = referralBonusesConfig?.value ?? false;
+
+    // If disabled, return immediately without distributing any bonuses
+    if (!isReferralBonusesEnabled) {
+        return 0;
+    }
+
     let currentUserId = stakerId;
     let level = 1;
     const MAX_LEVELS = 2; // Only L1 and L2 for referral bonuses

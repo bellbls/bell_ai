@@ -7,7 +7,7 @@ import {
   Wallet, TrendingUp, Users, Award, ArrowRight,
   LayoutDashboard, Settings, LogOut, Copy, Check,
   Menu, X, Bell, ChevronRight, ArrowDownLeft, ArrowUpRight, History,
-  Shield, User, Lock, AlertCircle, Rocket, Coins, ArrowRightLeft
+  Shield, User, Lock, AlertCircle, Rocket, Coins, ArrowRightLeft, Network
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -70,6 +70,17 @@ export default function Home() {
   // BLS System
   const blsConfig = useQuery(api.bls.getBLSConfig);
   const blsBalance = useQuery(api.bls.getBLSBalance, userId ? { userId: userId as any } : "skip");
+  
+  // Presale - Get user orders for node count
+  const userOrders = useQuery(api.presale.getUserOrders, userId ? { userId: userId as any } : "skip");
+  
+  // Calculate total nodes owned
+  const totalNodesOwned = userOrders?.reduce((sum, order) => {
+    if (order.status === "confirmed" || order.status === "converted") {
+      return sum + order.quantity;
+    }
+    return sum;
+  }, 0) || 0;
 
   const handleAuth = async () => {
     setError("");
@@ -444,7 +455,7 @@ export default function Home() {
               </div>
 
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div onClick={() => setActiveTab("wallet")} className="cursor-pointer">
                   <StatsCard
                     title="Wallet Balance"
@@ -461,6 +472,15 @@ export default function Home() {
                     icon={<Users className="text-blue-400" />}
                     trend="Total Network"
                     color="blue"
+                  />
+                </div>
+                <div onClick={() => setActiveTab("presale")} className="cursor-pointer">
+                  <StatsCard
+                    title="Nodes Owned"
+                    value={totalNodesOwned.toString()}
+                    icon={<Rocket className="text-purple-400" />}
+                    trend="Presale Nodes"
+                    color="purple"
                   />
                 </div>
                 <StatsCard
@@ -500,7 +520,7 @@ export default function Home() {
           )}
 
           {activeTab === "earnings" && (
-            <EarningsView userEarnings={userEarnings} blsConfig={blsConfig} />
+            <EarningsView userEarnings={userEarnings} blsConfig={blsConfig} pauseStates={pauseStates} />
           )}
 
           {activeTab === "wallet" && (
@@ -1083,12 +1103,13 @@ function NetworkView({ allUsers, userId }: any) {
   )
 }
 
-function EarningsView({ userEarnings, blsConfig }: any) {
+function EarningsView({ userEarnings, blsConfig, pauseStates }: any) {
   if (!userEarnings) {
     return <div className="text-center text-slate-500 py-8">Loading earnings...</div>;
   }
 
   const isBLSEnabled = blsConfig?.isEnabled || false;
+  const referralBonusesEnabled = pauseStates?.referralBonusesEnabled ?? false;
 
   // Helper function to format amount and prevent -0.00 display
   const formatAmountHelper = (amount: number): string => {
@@ -1171,20 +1192,32 @@ function EarningsView({ userEarnings, blsConfig }: any) {
           color="emerald"
           recentTransactions={recent.yield}
         />
-        <EarningCard
-          title="Direct Commissions (L1)"
-          amount={summary.totalDirectCommissions}
-          icon={<Users className="w-6 h-6 text-purple-400" />}
-          color="purple"
-          recentTransactions={recent.directCommissions}
-        />
-        <EarningCard
-          title="Indirect Commissions (L2)"
-          amount={summary.totalIndirectCommissions}
-          icon={<Users className="w-6 h-6 text-blue-400" />}
-          color="blue"
-          recentTransactions={recent.indirectCommissions}
-        />
+        {referralBonusesEnabled ? (
+          <>
+            <EarningCard
+              title="Direct Commissions (L1)"
+              amount={summary.totalDirectCommissions}
+              icon={<Users className="w-6 h-6 text-purple-400" />}
+              color="purple"
+              recentTransactions={recent.directCommissions}
+            />
+            <EarningCard
+              title="Indirect Commissions (L2)"
+              amount={summary.totalIndirectCommissions}
+              icon={<Users className="w-6 h-6 text-blue-400" />}
+              color="blue"
+              recentTransactions={recent.indirectCommissions}
+            />
+          </>
+        ) : (
+          <EarningCard
+            title="Unilevel Commissions"
+            amount={summary.totalUnilevelCommissions || 0}
+            icon={<Network className="w-6 h-6 text-indigo-400" />}
+            color="indigo"
+            recentTransactions={recent.unilevelCommissions || []}
+          />
+        )}
         <EarningCard
           title="B-Rank Bonuses"
           amount={summary.totalVRankBonuses}
@@ -1222,8 +1255,14 @@ function EarningsView({ userEarnings, blsConfig }: any) {
             <h3 className="font-bold mb-2">How Earnings Work</h3>
             <ul className="text-sm text-slate-400 space-y-1">
               <li>• <strong>Daily Yield:</strong> Earnings from your active stakes {isBLSEnabled && "(paid in BLS)"}</li>
-              <li>• <strong>Direct Commissions (L1):</strong> 15% of your direct referrals' daily yield {isBLSEnabled && "(paid in BLS)"}</li>
-              <li>• <strong>Indirect Commissions (L2):</strong> 10% of your indirect referrals' daily yield {isBLSEnabled && "(paid in BLS)"}</li>
+              {referralBonusesEnabled ? (
+                <>
+                  <li>• <strong>Direct Commissions (L1):</strong> 15% of your direct referrals' daily yield {isBLSEnabled && "(paid in BLS)"}</li>
+                  <li>• <strong>Indirect Commissions (L2):</strong> 10% of your indirect referrals' daily yield {isBLSEnabled && "(paid in BLS)"}</li>
+                </>
+              ) : (
+                <li>• <strong>Unilevel Commissions:</strong> Earn from 10 levels of your network (up to 16% total) {isBLSEnabled && "(paid in BLS)"}</li>
+              )}
               <li>• <strong>B-Rank Bonuses:</strong> Additional % based on your B-Rank level {isBLSEnabled && "(paid in BLS)"}</li>
             </ul>
           </div>

@@ -70,6 +70,7 @@ export default function AdminPage() {
     const rejectWithdrawal = useMutation(api.wallet.rejectWithdrawal);
     const toggleStakingPause = useMutation(api.configs.toggleStakingPause);
     const toggleWithdrawalsPause = useMutation(api.configs.toggleWithdrawalsPause);
+    const toggleReferralBonuses = useMutation(api.configs.toggleReferralBonuses);
     const toggleBLSSystem = useMutation(api.bls.toggleBLSSystem);
     const updateBLSConfig = useMutation(api.bls.updateBLSConfig);
 
@@ -328,6 +329,7 @@ export default function AdminPage() {
                             pauseStates={pauseStates}
                             toggleStakingPause={toggleStakingPause}
                             toggleWithdrawalsPause={toggleWithdrawalsPause}
+                            toggleReferralBonuses={toggleReferralBonuses}
                         />
                     )}
 
@@ -757,7 +759,7 @@ function BRanksTab({ rankRules, createVRank, updateVRank, deleteVRank, toast, se
     );
 }
 
-function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycle, deleteStakingCycle, toast, setConfirmModal, pauseStates, toggleStakingPause, toggleWithdrawalsPause }: any) {
+function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycle, deleteStakingCycle, toast, setConfirmModal, pauseStates, toggleStakingPause, toggleWithdrawalsPause, toggleReferralBonuses }: any) {
     const [showForm, setShowForm] = useState(false);
     const [editing, setEditing] = useState<any>(null);
     const [formData, setFormData] = useState({
@@ -766,6 +768,7 @@ function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycl
     });
     const [isTogglingStaking, setIsTogglingStaking] = useState(false);
     const [isTogglingWithdrawals, setIsTogglingWithdrawals] = useState(false);
+    const [isTogglingReferralBonuses, setIsTogglingReferralBonuses] = useState(false);
 
     const handleToggleStaking = async () => {
         setConfirmModal({
@@ -802,6 +805,26 @@ function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycl
                     toast.error(error.message || 'Failed to toggle withdrawals');
                 } finally {
                     setIsTogglingWithdrawals(false);
+                }
+            }
+        });
+    };
+
+    const handleToggleReferralBonuses = async () => {
+        setConfirmModal({
+            isOpen: true,
+            title: `${pauseStates?.referralBonusesEnabled ? 'Disable' : 'Enable'} Referral Bonuses`,
+            message: `Are you sure you want to ${pauseStates?.referralBonusesEnabled ? 'disable' : 'enable'} L1 and L2 referral bonuses? All users will be notified.`,
+            type: pauseStates?.referralBonusesEnabled ? 'warning' : 'info',
+            onConfirm: async () => {
+                setIsTogglingReferralBonuses(true);
+                try {
+                    await toggleReferralBonuses();
+                    toast.success(`Referral bonuses ${pauseStates?.referralBonusesEnabled ? 'disabled' : 'enabled'} successfully!`);
+                } catch (error: any) {
+                    toast.error(error.message || 'Failed to toggle referral bonuses');
+                } finally {
+                    setIsTogglingReferralBonuses(false);
                 }
             }
         });
@@ -851,7 +874,7 @@ function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycl
     return (
         <div className="space-y-6">
             {/* System Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Staking Control */}
                 <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -909,6 +932,36 @@ function StakingCyclesTab({ stakingCycles, createStakingCycle, updateStakingCycl
                         {pauseStates?.withdrawalsPaused
                             ? 'Users cannot request new withdrawals. Pending withdrawals can still be processed.'
                             : 'Users can request withdrawals normally.'}
+                    </p>
+                </div>
+
+                {/* Referral Bonuses Control */}
+                <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 className="text-lg font-bold">Referral Bonuses</h3>
+                            <p className="text-sm text-slate-400 mt-1">
+                                Status: <span className={`font-bold ${pauseStates?.referralBonusesEnabled ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {pauseStates?.referralBonusesEnabled ? 'ENABLED' : 'DISABLED'}
+                                </span>
+                            </p>
+                        </div>
+                        <button
+                            onClick={handleToggleReferralBonuses}
+                            disabled={isTogglingReferralBonuses}
+                            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${pauseStates?.referralBonusesEnabled
+                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                    : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                                } ${isTogglingReferralBonuses ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {pauseStates?.referralBonusesEnabled ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                            {pauseStates?.referralBonusesEnabled ? 'Disable Bonuses' : 'Enable Bonuses'}
+                        </button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                        {pauseStates?.referralBonusesEnabled
+                            ? 'L1 (15%) and L2 (10%) referral bonuses are active. Unilevel commissions also available.'
+                            : 'L1 and L2 referral bonuses are disabled. Only Unilevel commissions are active.'}
                     </p>
                 </div>
             </div>

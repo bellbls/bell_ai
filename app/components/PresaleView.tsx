@@ -5,7 +5,7 @@ import { Id } from "../convex/_generated/dataModel";
 import {
     Rocket, AlertCircle, Check, Clock, Shield,
     TrendingUp, Wallet, Info, ChevronRight, Star,
-    DollarSign, Calendar, Users, Award, Layers, Zap
+    DollarSign, Calendar, Users, Award, Layers, Zap, History
 } from "lucide-react";
 import { useToast } from "../hooks/useToast";
 
@@ -14,6 +14,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
     const config = useQuery(api.presale.getConfig);
     const userOrders = useQuery(api.presale.getUserOrders, { userId });
     const userProfile = useQuery(api.users.getProfile, { userId });
+    const pauseStates = useQuery(api.configs.getSystemPauseStates);
 
     const purchaseNode = useMutation(api.presale.purchaseNode);
 
@@ -175,16 +176,28 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                         </p>
                     </div>
 
-                    {/* Benefit 4: Referral Bonuses */}
-                    <div className="group bg-slate-800/50 hover:bg-slate-800/70 rounded-2xl p-6 border border-slate-700/50 hover:border-pink-500/50 transition-all duration-300">
-                        <div className="w-12 h-12 rounded-xl bg-pink-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                            <Users className="w-6 h-6 text-pink-400" />
+                    {/* Benefit 4: Referral Bonuses / Unilevel Commissions */}
+                    {(pauseStates?.referralBonusesEnabled ?? false) ? (
+                        <div className="group bg-slate-800/50 hover:bg-slate-800/70 rounded-2xl p-6 border border-slate-700/50 hover:border-pink-500/50 transition-all duration-300">
+                            <div className="w-12 h-12 rounded-xl bg-pink-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                <Users className="w-6 h-6 text-pink-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-white mb-2">Referral Bonuses</h3>
+                            <p className="text-sm text-slate-400 leading-relaxed">
+                                Invite others and earn rewards for every new user you bring to the platform.
+                            </p>
                         </div>
-                        <h3 className="text-lg font-bold text-white mb-2">Referral Bonuses</h3>
-                        <p className="text-sm text-slate-400 leading-relaxed">
-                            Invite others and earn rewards for every new user you bring to the platform.
-                        </p>
-                    </div>
+                    ) : (
+                        <div className="group bg-slate-800/50 hover:bg-slate-800/70 rounded-2xl p-6 border border-slate-700/50 hover:border-indigo-500/50 transition-all duration-300">
+                            <div className="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                <Layers className="w-6 h-6 text-indigo-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-white mb-2">Unilevel Commissions</h3>
+                            <p className="text-sm text-slate-400 leading-relaxed">
+                                Earn from 10 levels of your network with up to 16% total commission rates.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Benefit 5: B-Ranking Rewards */}
                     <div className="group bg-slate-800/50 hover:bg-slate-800/70 rounded-2xl p-6 border border-slate-700/50 hover:border-yellow-500/50 transition-all duration-300">
@@ -362,7 +375,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                                 <div className="flex-1">
                                     <h4 className="text-white font-semibold mb-2 text-lg">Staking is coming!</h4>
                                     <p className="text-slate-300 leading-relaxed">
-                                        Soon, your nodes will automatically roll into 1-year staking slots, unlocking rewards, referral bonuses, and revenue sharing right from day one. <strong className="text-white">Sit back and watch your passive income grow!</strong>
+                                        Soon, your nodes will automatically roll into 1-year staking slots, unlocking rewards, {(pauseStates?.referralBonusesEnabled ?? false) ? "referral bonuses" : "Unilevel commissions"}, and revenue sharing right from day one. <strong className="text-white">Sit back and watch your passive income grow!</strong>
                                     </p>
                                 </div>
                             </div>
@@ -439,6 +452,83 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* Transaction History Section */}
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-slate-700/50 overflow-hidden">
+                <div className="p-6 border-b border-slate-700/50">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+                                <History className="w-5 h-5 text-indigo-400" />
+                            </div>
+                            <h3 className="text-2xl font-bold text-white">Purchase History</h3>
+                        </div>
+                    </div>
+                </div>
+                <div className="p-6">
+                    {userOrders && userOrders.length > 0 ? (
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-slate-700/50">
+                                        <th className="text-left py-3 px-4 text-sm font-semibold text-slate-400 uppercase tracking-wider">Date</th>
+                                        <th className="text-left py-3 px-4 text-sm font-semibold text-slate-400 uppercase tracking-wider">Order ID</th>
+                                        <th className="text-left py-3 px-4 text-sm font-semibold text-slate-400 uppercase tracking-wider">Quantity</th>
+                                        <th className="text-left py-3 px-4 text-sm font-semibold text-slate-400 uppercase tracking-wider">Amount</th>
+                                        <th className="text-left py-3 px-4 text-sm font-semibold text-slate-400 uppercase tracking-wider">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700/30">
+                                    {userOrders
+                                        .sort((a, b) => b.purchaseDate - a.purchaseDate)
+                                        .map((order) => (
+                                            <tr key={order._id} className="hover:bg-slate-800/30 transition-colors">
+                                                <td className="py-4 px-4 text-slate-300">
+                                                    {new Date(order.purchaseDate).toLocaleString()}
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    <span className="text-slate-400 font-mono text-sm">
+                                                        {order._id.substring(order._id.length - 8)}
+                                                    </span>
+                                                </td>
+                                                <td className="py-4 px-4 text-white font-medium">
+                                                    {order.quantity} {order.quantity === 1 ? 'Node' : 'Nodes'}
+                                                </td>
+                                                <td className="py-4 px-4 text-indigo-400 font-semibold">
+                                                    ${order.totalAmount.toFixed(2)} USDT
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                                                        order.status === 'confirmed' 
+                                                            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                                            : order.status === 'converted'
+                                                            ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                                            : order.status === 'pending'
+                                                            ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                                            : 'bg-slate-700/50 text-slate-400 border border-slate-700'
+                                                    }`}>
+                                                        {order.status === 'confirmed' && <Check className="w-3 h-3 mr-1" />}
+                                                        {order.status === 'converted' && <Zap className="w-3 h-3 mr-1" />}
+                                                        {order.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
+                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="text-center py-12">
+                            <div className="w-16 h-16 bg-slate-800/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <History className="w-8 h-8 text-slate-600" />
+                            </div>
+                            <p className="text-slate-400 text-lg mb-2">No Purchase History</p>
+                            <p className="text-slate-500 text-sm">Your node purchase transactions will appear here</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

@@ -433,13 +433,23 @@ export const getUserEarnings = query({
             return false;
         });
         
+        // Separate L2 indirect commissions from Unilevel commissions
         const indirectCommissions = transactions.filter(t => {
-            if (t.type === "commission_indirect" || t.type === "commission_unilevel") return true;
+            if (t.type === "commission_indirect") return true;
             if (t.type === "bls_earned") {
                 const desc = t.description?.toLowerCase() || "";
-                return desc.includes("l2") || desc.includes("indirect") || 
-                       desc.includes("unilevel") || 
+                return (desc.includes("l2") || desc.includes("indirect")) && 
+                       !desc.includes("unilevel") &&
                        (desc.includes("referral") && (desc.includes("l2") || desc.includes("indirect")));
+            }
+            return false;
+        });
+
+        const unilevelCommissions = transactions.filter(t => {
+            if (t.type === "commission_unilevel") return true;
+            if (t.type === "bls_earned") {
+                const desc = t.description?.toLowerCase() || "";
+                return desc.includes("unilevel");
             }
             return false;
         });
@@ -462,6 +472,7 @@ export const getUserEarnings = query({
         const totalYield = yieldTransactions.reduce((sum, t) => sum + t.amount, 0);
         const totalDirectCommissions = directCommissions.reduce((sum, t) => sum + t.amount, 0);
         const totalIndirectCommissions = indirectCommissions.reduce((sum, t) => sum + t.amount, 0);
+        const totalUnilevelCommissions = unilevelCommissions.reduce((sum, t) => sum + t.amount, 0);
         const totalVRankBonuses = vrankBonuses.reduce((sum, t) => sum + t.amount, 0);
 
         return {
@@ -469,13 +480,15 @@ export const getUserEarnings = query({
                 totalYield,
                 totalDirectCommissions,
                 totalIndirectCommissions,
+                totalUnilevelCommissions,
                 totalVRankBonuses,
-                totalEarnings: totalYield + totalDirectCommissions + totalIndirectCommissions + totalVRankBonuses,
+                totalEarnings: totalYield + totalDirectCommissions + totalIndirectCommissions + totalUnilevelCommissions + totalVRankBonuses,
             },
             recent: {
                 yield: yieldTransactions.slice(0, 5),
                 directCommissions: directCommissions.slice(0, 5),
                 indirectCommissions: indirectCommissions.slice(0, 5),
+                unilevelCommissions: unilevelCommissions.slice(0, 5),
                 vrankBonuses: vrankBonuses.slice(0, 5),
             },
         };
