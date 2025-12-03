@@ -2,6 +2,97 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  // Logins table - stores authentication credentials
+  logins: defineTable({
+    email: v.string(),
+    password: v.optional(v.string()),
+    
+    // Security & Auth Fields
+    emailVerified: v.optional(v.boolean()),  // Email verification status
+    emailVerificationToken: v.optional(v.string()),  // Token for email verification
+    emailVerificationExpiry: v.optional(v.number()),  // Token expiry timestamp
+    passwordResetToken: v.optional(v.string()),  // Token for password reset
+    passwordResetExpiry: v.optional(v.number()),  // Token expiry timestamp
+    lastLoginAt: v.optional(v.number()),  // Last successful login
+    lastLoginIp: v.optional(v.string()),  // IP address of last login
+    loginAttempts: v.optional(v.number()),  // Failed login attempts counter
+    lockedUntil: v.optional(v.number()),  // Account lock expiry (for brute force protection)
+    twoFactorEnabled: v.optional(v.boolean()),  // 2FA enabled status
+    twoFactorSecret: v.optional(v.string()),  // TOTP secret for 2FA (encrypted)
+    twoFactorBackupCodes: v.optional(v.array(v.string())),  // Hashed backup codes
+    twoFactorSetupAt: v.optional(v.number()),  // When 2FA was enabled
+    twoFactorRequiredAt: v.optional(v.number()),  // When user was required to set up 2FA (for grace period tracking)
+
+    createdAt: v.number(),
+  })
+    .index("by_email", ["email"])
+    .index("by_emailVerificationToken", ["emailVerificationToken"])  // For email verification
+    .index("by_passwordResetToken", ["passwordResetToken"]),  // For password reset
+
+  // Accounts table - stores account-specific business data
+  accounts: defineTable({
+    loginId: v.id("logins"),  // Link to login
+    name: v.string(),
+    referralCode: v.string(),
+    referrerId: v.optional(v.id("accounts")), // Direct Sponsor (account, not login)
+    role: v.optional(v.string()), // "admin" or undefined for regular users
+    isDefault: v.optional(v.boolean()), // Is this the default account for the login?
+    isDeleted: v.optional(v.boolean()), // Soft delete flag
+
+    // Binary Tree Fields
+    parentId: v.optional(v.id("accounts")), // Upline in Binary Tree
+    leftLegId: v.optional(v.id("accounts")),
+    rightLegId: v.optional(v.id("accounts")),
+    position: v.optional(v.union(v.literal("left"), v.literal("right"))),
+
+    currentRank: v.string(), // "B0", "B1", ...
+    teamVolume: v.number(), // USDT
+    directReferralsCount: v.number(),
+    walletBalance: v.number(),
+
+    // Web3 Deposit Address (for receiving blockchain deposits)
+    depositAddress: v.optional(v.string()),  // Account's Ethereum address for deposits
+    depositAddressLinkedAt: v.optional(v.number()),  // When address was linked
+
+    // Unilevel Commission Tracking
+    activeDirectReferrals: v.optional(v.number()),      // Count of directs with active stakes
+    unlockedLevels: v.optional(v.number()),             // Calculated: activeDirectReferrals × 2 (max 10)
+    lastUnlockUpdate: v.optional(v.number()),           // When unlock was last calculated
+
+    // B-Rank Bonus Capping
+    totalBRankBonusReceived: v.optional(v.number()),    // Total B-Rank bonuses received (lifetime)
+
+    // BellCoin Stable (BLS) Balance
+    blsBalance: v.optional(v.number()),                  // BLS balance (off-chain points)
+
+    createdAt: v.number(),
+  })
+    .index("by_loginId", ["loginId"])
+    .index("by_referralCode", ["referralCode"])
+    .index("by_referrerId", ["referrerId"])
+    .index("by_parentId", ["parentId"])
+    .index("by_depositAddress", ["depositAddress"])  // Ensure unique deposit addresses
+    .index("by_isDeleted", ["isDeleted"]),
+
+  // Account members - for future team/member access
+  account_members: defineTable({
+    accountId: v.id("accounts"),
+    loginId: v.id("logins"),
+    role: v.union(v.literal("owner"), v.literal("member")),
+    permissions: v.optional(v.object({
+      canStake: v.optional(v.boolean()),
+      canWithdraw: v.optional(v.boolean()),
+      canViewReports: v.optional(v.boolean()),
+    })),
+    invitedAt: v.optional(v.number()),
+    joinedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_accountId", ["accountId"])
+    .index("by_loginId", ["loginId"])
+    .index("by_accountId_loginId", ["accountId", "loginId"]),
+
+  // Keep users table for backward compatibility during migration
   users: defineTable({
     name: v.string(),
     email: v.string(),
@@ -63,7 +154,7 @@ export default defineSchema({
     .index("by_passwordResetToken", ["passwordResetToken"]),  // For password reset
 
   stakes: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
     amount: v.number(),
     cycleDays: v.number(),
     dailyRate: v.number(),
@@ -71,12 +162,15 @@ export default defineSchema({
     endDate: v.number(),
     status: v.union(v.literal("active"), v.literal("completed")),
     lastYieldDate: v.optional(v.number()),
+    // Keep userId for backward compatibility during migration
+    userId: v.optional(v.id("users")),
   })
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_status", ["status"]),
 
   transactions: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
     amount: v.number(),
     type: v.union(
       v.literal("deposit"),
@@ -99,13 +193,19 @@ export default defineSchema({
     commissionLevel: v.optional(v.number()),         // L1-L10 for unilevel
     commissionRate: v.optional(v.number()),          // 0.01-0.03
     sourceStakeId: v.optional(v.id("stakes")),       // Which stake generated this
-    sourceUserId: v.optional(v.id("users")),         // Who generated the yield
+    sourceAccountId: v.optional(v.id("accounts")),   // Who generated the yield (changed from sourceUserId)
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
+    sourceUserId: v.optional(v.id("users")),
   })
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_type", ["type"]),
 
   withdrawals: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     amount: v.number(),
     fee: v.optional(v.number()),        // NEW: Withdrawal fee (5%)
     netAmount: v.optional(v.number()),  // NEW: Amount sent to user (amount - fee)
@@ -121,7 +221,8 @@ export default defineSchema({
     ),
     requestDate: v.number(),
     processedDate: v.optional(v.number()),
-    adminId: v.optional(v.id("users")),
+    adminId: v.optional(v.id("accounts")),  // Changed from users to accounts
+    adminUserId: v.optional(v.id("users")),  // Keep for backward compatibility
     txHash: v.optional(v.string()),
 
     // NEW: Blockchain execution fields
@@ -137,7 +238,8 @@ export default defineSchema({
     )),
   })
     .index("by_status", ["status"])
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_adminId", ["adminId"])
     .index("by_network", ["network"]),
 
@@ -155,7 +257,9 @@ export default defineSchema({
   }).index("by_timestamp", ["timestamp"]),
 
   notifications: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     type: v.union(
       v.literal("earnings"),
       v.literal("commission"),
@@ -172,14 +276,19 @@ export default defineSchema({
     createdAt: v.number(),
     icon: v.string(), // Icon identifier
   })
-    .index("by_userId", ["userId"])
-    .index("by_userId_read", ["userId", "read"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
+    .index("by_accountId_read", ["accountId", "read"])
+    .index("by_userId_read", ["userId", "read"])  // Keep for migration
     .index("by_createdAt", ["createdAt"]),
 
   // Unilevel Commission History (for reporting)
   commission_history: defineTable({
-    userId: v.id("users"),                    // Who earned the commission
-    sourceUserId: v.id("users"),              // Who generated the yield
+    accountId: v.optional(v.id("accounts")),                    // Who earned the commission (changed from userId) - optional during migration
+    sourceAccountId: v.optional(v.id("accounts")),              // Who generated the yield (changed from sourceUserId) - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
+    sourceUserId: v.optional(v.id("users")),
     sourceStakeId: v.id("stakes"),            // Which stake
     level: v.number(),                        // L1-L10
     rate: v.number(),                         // Commission rate applied
@@ -191,14 +300,18 @@ export default defineSchema({
     month: v.string(),                        // "YYYY-MM" for monthly reports
     year: v.number(),                         // Year for yearly reports
   })
-    .index("by_userId", ["userId"])
-    .index("by_sourceUserId", ["sourceUserId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
+    .index("by_sourceAccountId", ["sourceAccountId"])
+    .index("by_sourceUserId", ["sourceUserId"])  // Keep for migration
     .index("by_date", ["date"])
     .index("by_week", ["week"])
     .index("by_month", ["month"])
     .index("by_year", ["year"])
-    .index("by_userId_date", ["userId", "date"])
-    .index("by_userId_month", ["userId", "month"]),
+    .index("by_accountId_date", ["accountId", "date"])
+    .index("by_userId_date", ["userId", "date"])  // Keep for migration
+    .index("by_accountId_month", ["accountId", "month"])
+    .index("by_userId_month", ["userId", "month"]),  // Keep for migration
 
   configs: defineTable({
     key: v.string(),
@@ -206,15 +319,19 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   saved_wallets: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     address: v.string(),
     label: v.optional(v.string()),
     status: v.union(v.literal("locked"), v.literal("active")),
     createdAt: v.number(),
     unlockedAt: v.number(),
   })
-    .index("by_userId", ["userId"])
-    .index("by_userId_status", ["userId", "status"]),
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
+    .index("by_accountId_status", ["accountId", "status"])
+    .index("by_userId_status", ["userId", "status"]),  // Keep for migration
 
   // Blockchain sync state tracking
   blockchain_sync: defineTable({
@@ -232,7 +349,9 @@ export default defineSchema({
 
   // Deposit transaction logs (for blockchain deposits)
   deposit_logs: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     txHash: v.string(),  // Blockchain transaction hash (unique)
     fromAddress: v.string(),  // Depositor's blockchain address
     toAddress: v.string(),  // Contract address (VaultUSDT)
@@ -245,7 +364,8 @@ export default defineSchema({
     contractAddress: v.string(),  // Contract address for this network
   })
     .index("by_txHash", ["txHash"])  // Prevent duplicate processing
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_blockNumber", ["blockNumber"])
     .index("by_network", ["network"]),
 
@@ -314,7 +434,9 @@ export default defineSchema({
   }),
 
   presaleOrders: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     quantity: v.number(),               // Number of nodes purchased
     totalAmount: v.number(),            // Total cost (quantity * $50)
     status: v.union(
@@ -336,13 +458,16 @@ export default defineSchema({
       userAgent: v.optional(v.string()),
     })),
   })
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_status", ["status"])
     .index("by_purchaseDate", ["purchaseDate"]),
 
   presaleStakes: defineTable({
     orderId: v.id("presaleOrders"),
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     nodeAmount: v.number(),             // Value of this vested portion
     unlockDate: v.number(),             // When this portion unlocks
     status: v.union(
@@ -353,11 +478,13 @@ export default defineSchema({
     claimedDate: v.optional(v.number()),
     stakeId: v.optional(v.id("stakes")), // Created stake after claim
   })
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_orderId", ["orderId"])
     .index("by_status", ["status"])
     .index("by_unlockDate", ["unlockDate"])
-    .index("by_userId_status", ["userId", "status"]),
+    .index("by_accountId_status", ["accountId", "status"])
+    .index("by_userId_status", ["userId", "status"]),  // Keep for migration
 
   presaleAuditLog: defineTable({
     action: v.union(
@@ -368,6 +495,9 @@ export default defineSchema({
       v.literal("claim"),
       v.literal("admin_action")
     ),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId
+    adminAccountId: v.optional(v.id("accounts")),  // Changed from adminId
+    // Keep for backward compatibility during migration
     userId: v.optional(v.id("users")),
     adminId: v.optional(v.id("users")),
     orderId: v.optional(v.id("presaleOrders")),
@@ -376,30 +506,41 @@ export default defineSchema({
     ipAddress: v.optional(v.string()),
   })
     .index("by_action", ["action"])
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_timestamp", ["timestamp"]),
 
   // Convex Auth Tables
   authSessions: defineTable({
-    userId: v.id("users"),
+    loginId: v.id("logins"),  // Changed from userId to loginId
+    currentAccountId: v.optional(v.id("accounts")),  // Currently active account
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     sessionToken: v.string(),
     expiresAt: v.number(),
     createdAt: v.number(),
   })
-    .index("by_userId", ["userId"])
+    .index("by_loginId", ["loginId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_sessionToken", ["sessionToken"]),
 
   authAccounts: defineTable({
-    userId: v.id("users"),
+    loginId: v.id("logins"),  // Changed from userId to loginId
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     provider: v.string(),  // "password", "google", etc.
     providerAccountId: v.string(),
     createdAt: v.number(),
   })
-    .index("by_userId", ["userId"])
+    .index("by_loginId", ["loginId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_provider_account", ["provider", "providerAccountId"]),
 
   // Security Audit Log
   security_audit_log: defineTable({
+    loginId: v.optional(v.id("logins")),  // Changed from userId to loginId
+    accountId: v.optional(v.id("accounts")),  // Optional account context
+    // Keep for backward compatibility during migration
     userId: v.optional(v.id("users")),  // Optional for failed login attempts
     action: v.string(),  // "login", "logout", "password_change", "withdrawal", etc.
     status: v.union(v.literal("success"), v.literal("failed")),
@@ -408,14 +549,18 @@ export default defineSchema({
     metadata: v.optional(v.any()),  // Additional context (JSON)
     timestamp: v.number(),
   })
-    .index("by_userId", ["userId"])
+    .index("by_loginId", ["loginId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_action", ["action"])
     .index("by_timestamp", ["timestamp"])
     .index("by_status", ["status"]),
 
   // Two-Factor Authentication Logs
   twoFactorLogs: defineTable({
-    userId: v.id("users"),
+    loginId: v.id("logins"),  // Changed from userId to loginId (2FA is per login, not per account)
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     action: v.union(
       v.literal("enabled"),
       v.literal("disabled"),
@@ -429,7 +574,8 @@ export default defineSchema({
     userAgent: v.optional(v.string()),
     metadata: v.optional(v.any()),  // Additional context
   })
-    .index("by_userId", ["userId"])
+    .index("by_loginId", ["loginId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_action", ["action"])
     .index("by_timestamp", ["timestamp"]),
 
@@ -444,7 +590,9 @@ export default defineSchema({
 
   // BLS Swap Requests
   blsSwapRequests: defineTable({
-    userId: v.id("users"),
+    accountId: v.optional(v.id("accounts")),  // Changed from userId - optional during migration
+    // Keep for backward compatibility during migration
+    userId: v.optional(v.id("users")),
     blsAmount: v.number(),               // Amount of BLS swapped
     usdtAmount: v.number(),              // Amount of USDT credited
     status: v.union(
@@ -455,7 +603,8 @@ export default defineSchema({
     timestamp: v.number(),
     completedAt: v.optional(v.number()),
   })
-    .index("by_userId", ["userId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_userId", ["userId"])  // Keep for migration
     .index("by_status", ["status"])
     .index("by_timestamp", ["timestamp"]),
 });

@@ -19,9 +19,9 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
 
     // Queries
     const blsConfig = useCachedQuery(api.bls.getBLSConfig);
-    const blsBalance = useCachedQuery(api.bls.getBLSBalance, { userId });
-    const userProfile = useCachedQuery(api.users.getProfile, { userId });
-    const swapHistory = useCachedQuery(api.bls.getSwapHistory, { userId });
+    const blsBalance = useCachedQuery(api.bls.getBLSBalance, userId ? { accountId: userId as any } : "skip");
+    const userProfile = useCachedQuery(api.users.getProfile, userId ? { accountId: userId as any } : "skip");
+    const swapHistory = useCachedQuery(api.bls.getSwapHistory, userId ? { accountId: userId as any } : "skip");
 
     // Mutations
     const swapBLSToUSDT = useCachedMutation(api.bls.swapBLSToUSDT);
@@ -88,7 +88,7 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
         setIsSwapping(true);
         try {
             const result = await swapBLSToUSDT({
-                userId,
+                accountId: userId as any,
                 blsAmount: amount,
             });
 

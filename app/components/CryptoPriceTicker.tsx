@@ -21,25 +21,72 @@ export function CryptoPriceTicker() {
     const [cryptoData, setCryptoData] = useState<CryptoData[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [retryCount, setRetryCount] = useState(0);
 
     const fetchCryptoData = async () => {
         try {
+            // Add timeout to prevent hanging requests
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
             const response = await fetch(
-                "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=8&page=1&sparkline=true&price_change_percentage=24h"
+                "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=8&page=1&sparkline=true&price_change_percentage=24h",
+                {
+                    signal: controller.signal,
+                    headers: {
+                        'Accept': 'application/json',
+                    }
+                }
             );
 
+            clearTimeout(timeoutId);
+
             if (!response.ok) {
-                throw new Error("Failed to fetch crypto data");
+                // Handle specific HTTP errors
+                if (response.status === 429) {
+                    throw new Error("Rate limit exceeded. Please try again later.");
+                } else if (response.status >= 500) {
+                    throw new Error("Service temporarily unavailable. Please try again later.");
+                } else {
+                    throw new Error(`Failed to fetch crypto data (${response.status})`);
+                }
             }
 
             const data = await response.json();
+            
+            // Validate data structure
+            if (!Array.isArray(data)) {
+                throw new Error("Invalid data format received");
+            }
+
             setCryptoData(data);
             setLoading(false);
             setError(null);
-        } catch (err) {
+            setRetryCount(0); // Reset retry count on success
+        } catch (err: any) {
             console.error("Error fetching crypto data:", err);
-            setError("Failed to load crypto prices");
+            
+            // Provide user-friendly error messages
+            let errorMessage = "Failed to load crypto prices";
+            if (err.name === "AbortError") {
+                errorMessage = "Request timed out. Please check your connection.";
+            } else if (err.message) {
+                errorMessage = err.message;
+            } else if (err instanceof TypeError && err.message.includes("fetch")) {
+                errorMessage = "Network error. Please check your internet connection.";
+            }
+            
+            setError(errorMessage);
             setLoading(false);
+            
+            // Auto-retry up to 3 times with exponential backoff
+            if (retryCount < 3) {
+                const delay = Math.min(1000 * Math.pow(2, retryCount), 10000); // Max 10 seconds
+                setTimeout(() => {
+                    setRetryCount(prev => prev + 1);
+                    fetchCryptoData();
+                }, delay);
+            }
         }
     };
 
@@ -47,9 +94,12 @@ export function CryptoPriceTicker() {
         fetchCryptoData();
 
         // Refresh every 60 seconds
-        const interval = setInterval(fetchCryptoData, 60000);
+        const interval = setInterval(() => {
+            fetchCryptoData();
+        }, 60000);
 
         return () => clearInterval(interval);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const formatPrice = (price: number) => {
@@ -136,8 +186,24 @@ export function CryptoPriceTicker() {
         return (
             <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
                 <h3 className="text-lg font-bold mb-4">Live Crypto Prices</h3>
-                <div className="flex items-center justify-center h-64">
-                    <div className="text-red-400">{error}</div>
+                <div className="flex flex-col items-center justify-center h-64 gap-4">
+                    <div className="text-red-400 text-center">{error}</div>
+                    {retryCount < 3 && (
+                        <div className="text-slate-400 text-sm">Retrying... ({retryCount + 1}/3)</div>
+                    )}
+                    {retryCount >= 3 && (
+                        <button
+                            onClick={() => {
+                                setRetryCount(0);
+                                setError(null);
+                                setLoading(true);
+                                fetchCryptoData();
+                            }}
+                            className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition-colors"
+                        >
+                            Retry
+                        </button>
+                    )}
                 </div>
             </div>
         );

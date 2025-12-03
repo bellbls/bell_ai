@@ -464,7 +464,25 @@ export const getRecentActivities = query({
 
         const activities = await Promise.all(
             transactions.map(async (t) => {
-                const user = await ctx.db.get(t.userId);
+                // Get user/account info - handle both accountId and userId
+                let user = null;
+                let account = null;
+                
+                if (t.accountId) {
+                    account = await ctx.db.get(t.accountId);
+                    if (account) {
+                        // Get login to find email
+                        const login = await ctx.db.get(account.loginId);
+                        user = {
+                            name: account.name,
+                            email: login?.email || "Unknown",
+                        };
+                    }
+                } else if (t.userId) {
+                    // Legacy: get user directly
+                    user = await ctx.db.get(t.userId);
+                }
+                
                 const isBLS = t.type === "bls_earned";
                 const usdtAmount = isBLS ? (t.amount * conversionRate) : t.amount;
                 const blsAmount = isBLS ? t.amount : null;
@@ -477,7 +495,7 @@ export const getRecentActivities = query({
                     isBLS: isBLS,
                     description: t.description,
                     timestamp: t.timestamp,
-                    userName: user?.name || "Unknown",
+                    userName: user?.name || account?.name || "Unknown",
                     userEmail: user?.email || "Unknown",
                 };
             })

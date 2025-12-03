@@ -126,17 +126,102 @@ export const register = mutation({
             timestamp: Date.now(),
         });
 
-        // 7. Send welcome notification
+        // 7. Create login record for new user
+        const loginId = await ctx.db.insert("logins", {
+            email: args.email.toLowerCase(),
+            password: passwordHash,
+            emailVerified: false,
+            loginAttempts: 0,
+            twoFactorEnabled: false,
+            createdAt: Date.now(),
+        });
+
+        // 8. Find referrer account (for linking)
+        let referrerAccountId: Id<"accounts"> | undefined;
+        const referrerLogin = await ctx.db
+            .query("logins")
+            .withIndex("by_email", (q) => q.eq("email", referrer.email))
+            .first();
+        
+        if (referrerLogin) {
+            const referrerAccount = await ctx.db
+                .query("accounts")
+                .withIndex("by_loginId", (q) => q.eq("loginId", referrerLogin._id))
+                .filter((q) => q.eq(q.field("isDefault"), true))
+                .first();
+            referrerAccountId = referrerAccount?._id;
+        }
+
+        // Helper to find accountId from userId
+        const findAccountIdFromUserId = async (userId: Id<"users"> | undefined): Promise<Id<"accounts"> | undefined> => {
+            if (!userId) return undefined;
+            const targetUser = await ctx.db.get(userId);
+            if (!targetUser) return undefined;
+            
+            const targetLogin = await ctx.db
+                .query("logins")
+                .withIndex("by_email", (q) => q.eq("email", targetUser.email))
+                .first();
+            
+            if (!targetLogin) return undefined;
+            
+            const targetAccount = await ctx.db
+                .query("accounts")
+                .withIndex("by_loginId", (q) => q.eq("loginId", targetLogin._id))
+                .filter((q) => q.eq(q.field("isDefault"), true))
+                .first();
+            
+            return targetAccount?._id;
+        };
+
+        // Find corresponding account IDs for relationship fields
+        const parentAccountId = parentId ? await findAccountIdFromUserId(parentId) : undefined;
+        const leftLegAccountId = undefined; // Will be set when children are added
+        const rightLegAccountId = undefined; // Will be set when children are added
+
+        // 9. Create default account for new user
+        const accountId = await ctx.db.insert("accounts", {
+            loginId: loginId,
+            name: args.name.trim(),
+            referralCode: newReferralCode,
+            referrerId: referrerAccountId,
+            role: undefined,
+            isDefault: true,
+            parentId: parentAccountId,
+            leftLegId: leftLegAccountId,
+            rightLegId: rightLegAccountId,
+            position: position,
+            currentRank: "B0",
+            teamVolume: 0,
+            directReferralsCount: 0,
+            walletBalance: 0,
+            createdAt: Date.now(),
+            isDeleted: false,
+        });
+
+        // 10. Update parent's leg reference (using accountId)
+        if (parentAccountId && position) {
+            await ctx.db.patch(parentAccountId, {
+                [position === "left" ? "leftLegId" : "rightLegId"]: accountId,
+            });
+        }
+
+        // 11. Send welcome notification
         await notify(
             ctx,
-            userId,
+            accountId,
             "system",
             "Welcome to BellAi!",
             `Your account has been created successfully. Your referral code is: ${newReferralCode}`,
             "Info"
         );
 
-        return userId;
+        // 12. Return new format with loginId and accountId
+        return {
+            loginId: loginId,
+            accountId: accountId,
+            userId: userId, // Legacy support
+        };
     },
 });
 
@@ -148,6 +233,29 @@ export const login = mutation({
         userAgent: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        // Helper function to find accountId from userId
+        const findAccountIdFromUserId = async (userId: Id<"users"> | undefined): Promise<Id<"accounts"> | undefined> => {
+            if (!userId) return undefined;
+            const targetUser = await ctx.db.get(userId);
+            if (!targetUser) return undefined;
+            
+            // Find login for this user
+            const targetLogin = await ctx.db
+                .query("logins")
+                .withIndex("by_email", (q) => q.eq("email", targetUser.email))
+                .first();
+            
+            if (!targetLogin) return undefined;
+            
+            // Find default account for this login
+            const targetAccount = await ctx.db
+                .query("accounts")
+                .withIndex("by_loginId", (q) => q.eq("loginId", targetLogin._id))
+                .filter((q) => q.eq(q.field("isDefault"), true))
+                .first();
+            
+            return targetAccount?._id;
+        };
         // 1. Validate input
         if (!isValidEmail(args.email)) {
             throw createError(ErrorCodes.VALIDATION_ERROR, 'Please enter a valid email address');
@@ -279,11 +387,72 @@ export const login = mutation({
 
             // If user has 2FA enabled, require code
             if (user.twoFactorEnabled) {
+                // Auto-migrate: Get or create login and account
+                let login = await ctx.db
+                    .query("logins")
+                    .withIndex("by_email", (q) => q.eq("email", user.email))
+                    .first();
+
+                let loginId: Id<"logins">;
+
+                if (!login) {
+                    loginId = await ctx.db.insert("logins", {
+                        email: user.email,
+                        password: user.password,
+                        emailVerified: user.emailVerified ?? false,
+                        twoFactorEnabled: user.twoFactorEnabled,
+                        twoFactorSecret: user.twoFactorSecret,
+                        twoFactorBackupCodes: user.twoFactorBackupCodes,
+                        twoFactorSetupAt: user.twoFactorSetupAt,
+                        twoFactorRequiredAt: user.twoFactorRequiredAt,
+                        createdAt: user.createdAt,
+                    });
+                    login = await ctx.db.get(loginId);
+                } else {
+                    loginId = login._id;
+                }
+
+                let account = await ctx.db
+                    .query("accounts")
+                    .withIndex("by_loginId", (q) => q.eq("loginId", loginId))
+                    .filter((q) => q.eq(q.field("isDefault"), true))
+                    .first();
+
+                if (!account) {
+                    // Find corresponding account IDs for relationship fields
+                    const referrerAccountId = user.referrerId ? await findAccountIdFromUserId(user.referrerId) : undefined;
+                    const parentAccountId = user.parentId ? await findAccountIdFromUserId(user.parentId) : undefined;
+                    const leftLegAccountId = user.leftLegId ? await findAccountIdFromUserId(user.leftLegId) : undefined;
+                    const rightLegAccountId = user.rightLegId ? await findAccountIdFromUserId(user.rightLegId) : undefined;
+
+                    account = await ctx.db.insert("accounts", {
+                        loginId: loginId,
+                        name: user.name,
+                        referralCode: user.referralCode,
+                        referrerId: referrerAccountId,
+                        role: user.role,
+                        isDefault: true,
+                        parentId: parentAccountId,
+                        leftLegId: leftLegAccountId,
+                        rightLegId: rightLegAccountId,
+                        position: user.position,
+                        currentRank: user.currentRank,
+                        teamVolume: user.teamVolume,
+                        directReferralsCount: user.directReferralsCount,
+                        walletBalance: user.walletBalance,
+                        blsBalance: user.blsBalance,
+                        createdAt: user.createdAt,
+                        isDeleted: false,
+                    });
+                }
+
                 // Mark that they need to provide 2FA code
                 // Don't update lastLoginAt yet - wait for 2FA verification
                 return {
                     requires2FA: true,
-                    userId: user._id,
+                    loginId: loginId,
+                    accountId: account._id,
+                    userId: user._id, // Legacy support
                     gracePeriodInfo: null,
                 };
             }
@@ -329,9 +498,73 @@ export const login = mutation({
                     timestamp: Date.now(),
                 });
 
+                // Auto-migrate: Get or create login and account
+                let login = await ctx.db
+                    .query("logins")
+                    .withIndex("by_email", (q) => q.eq("email", user.email))
+                    .first();
+
+                let loginId: Id<"logins">;
+
+                if (!login) {
+                    loginId = await ctx.db.insert("logins", {
+                        email: user.email,
+                        password: user.password,
+                        emailVerified: user.emailVerified ?? false,
+                        lastLoginAt: Date.now(),
+                        lastLoginIp: args.ipAddress,
+                        loginAttempts: 0,
+                        twoFactorEnabled: user.twoFactorEnabled ?? false,
+                        twoFactorSecret: user.twoFactorSecret,
+                        twoFactorBackupCodes: user.twoFactorBackupCodes,
+                        twoFactorSetupAt: user.twoFactorSetupAt,
+                        twoFactorRequiredAt: user.twoFactorRequiredAt,
+                        createdAt: user.createdAt,
+                    });
+                    login = await ctx.db.get(loginId);
+                } else {
+                    loginId = login._id;
+                }
+
+                let account = await ctx.db
+                    .query("accounts")
+                    .withIndex("by_loginId", (q) => q.eq("loginId", loginId))
+                    .filter((q) => q.eq(q.field("isDefault"), true))
+                    .first();
+
+                if (!account) {
+                    // Find corresponding account IDs for relationship fields
+                    const referrerAccountId = user.referrerId ? await findAccountIdFromUserId(user.referrerId) : undefined;
+                    const parentAccountId = user.parentId ? await findAccountIdFromUserId(user.parentId) : undefined;
+                    const leftLegAccountId = user.leftLegId ? await findAccountIdFromUserId(user.leftLegId) : undefined;
+                    const rightLegAccountId = user.rightLegId ? await findAccountIdFromUserId(user.rightLegId) : undefined;
+
+                    account = await ctx.db.insert("accounts", {
+                        loginId: loginId,
+                        name: user.name,
+                        referralCode: user.referralCode,
+                        referrerId: referrerAccountId,
+                        role: user.role,
+                        isDefault: true,
+                        parentId: parentAccountId,
+                        leftLegId: leftLegAccountId,
+                        rightLegId: rightLegAccountId,
+                        position: user.position,
+                        currentRank: user.currentRank,
+                        teamVolume: user.teamVolume,
+                        directReferralsCount: user.directReferralsCount,
+                        walletBalance: user.walletBalance,
+                        blsBalance: user.blsBalance,
+                        createdAt: user.createdAt,
+                        isDeleted: false,
+                    });
+                }
+
                 return {
                     requires2FA: false,
-                    userId: user._id,
+                    loginId: loginId,
+                    accountId: account._id,
+                    userId: user._id, // Legacy support
                     gracePeriodInfo: {
                         daysRemaining: requirementCheck.daysRemaining ?? 0,
                         isFirstLogin: requirementCheck.isFirstLogin ?? false,
@@ -348,9 +581,101 @@ export const login = mutation({
             lastLoginIp: args.ipAddress,
         });
 
-        // 7. Log successful login
+        // 7. Auto-migrate: Check if login record exists, if not create it
+        let login = await ctx.db
+            .query("logins")
+            .withIndex("by_email", (q) => q.eq("email", user.email))
+            .first();
+
+        let loginId: Id<"logins">;
+
+        if (!login) {
+            // Create login record for this user (auto-migration)
+            loginId = await ctx.db.insert("logins", {
+                email: user.email,
+                password: user.password, // Already hashed
+                emailVerified: user.emailVerified ?? false,
+                emailVerificationToken: user.emailVerificationToken,
+                emailVerificationExpiry: user.emailVerificationExpiry,
+                passwordResetToken: user.passwordResetToken,
+                passwordResetExpiry: user.passwordResetExpiry,
+                lastLoginAt: Date.now(),
+                lastLoginIp: args.ipAddress,
+                loginAttempts: 0,
+                lockedUntil: undefined,
+                twoFactorEnabled: user.twoFactorEnabled ?? false,
+                twoFactorSecret: user.twoFactorSecret,
+                twoFactorBackupCodes: user.twoFactorBackupCodes,
+                twoFactorSetupAt: user.twoFactorSetupAt,
+                twoFactorRequiredAt: user.twoFactorRequiredAt,
+                createdAt: user.createdAt,
+            });
+            // Fetch the newly created login record
+            login = await ctx.db.get(loginId);
+        } else {
+            loginId = login._id;
+            // Update existing login record
+            await ctx.db.patch(login._id, {
+                lastLoginAt: Date.now(),
+                lastLoginIp: args.ipAddress,
+                loginAttempts: 0,
+                lockedUntil: undefined,
+            });
+        }
+
+        // 8. Ensure login is defined (should always be at this point)
+        if (!login || !login._id) {
+            throw createError(ErrorCodes.INTERNAL_ERROR, "Login record not found or created");
+        }
+
+        // 9. Find or create default account for this login
+        let account = await ctx.db
+            .query("accounts")
+            .withIndex("by_loginId", (q) => q.eq("loginId", loginId))
+            .filter((q) => q.eq(q.field("isDefault"), true))
+            .first();
+
+        if (!account) {
+            // Find corresponding account IDs for relationship fields (using helper from top of function)
+            const referrerAccountId = user.referrerId ? await findAccountIdFromUserId(user.referrerId) : undefined;
+            const parentAccountId = user.parentId ? await findAccountIdFromUserId(user.parentId) : undefined;
+            const leftLegAccountId = user.leftLegId ? await findAccountIdFromUserId(user.leftLegId) : undefined;
+            const rightLegAccountId = user.rightLegId ? await findAccountIdFromUserId(user.rightLegId) : undefined;
+
+            // Create default account for this user (auto-migration)
+            // loginId is guaranteed to exist at this point due to check above
+            account = await ctx.db.insert("accounts", {
+                loginId: loginId,
+                name: user.name,
+                referralCode: user.referralCode,
+                referrerId: referrerAccountId,
+                role: user.role,
+                isDefault: true,
+                parentId: parentAccountId,
+                leftLegId: leftLegAccountId,
+                rightLegId: rightLegAccountId,
+                position: user.position,
+                currentRank: user.currentRank,
+                teamVolume: user.teamVolume,
+                directReferralsCount: user.directReferralsCount,
+                walletBalance: user.walletBalance,
+                depositAddress: user.depositAddress,
+                depositAddressLinkedAt: user.depositAddressLinkedAt,
+                activeDirectReferrals: user.activeDirectReferrals,
+                unlockedLevels: user.unlockedLevels,
+                lastUnlockUpdate: user.lastUnlockUpdate,
+                totalBRankBonusReceived: user.totalBRankBonusReceived,
+                blsBalance: user.blsBalance,
+                createdAt: user.createdAt,
+                isDeleted: false,
+            });
+        }
+
+        // 10. Log successful login
         await ctx.db.insert("security_audit_log", {
-            userId: user._id,
+            loginId: loginId,
+            accountId: account._id,
+            userId: user._id, // Keep for backward compatibility
             action: "login",
             status: "success",
             ipAddress: args.ipAddress,
@@ -358,7 +683,12 @@ export const login = mutation({
             timestamp: Date.now(),
         });
 
-        return user._id;
+        // 11. Return new format with loginId and accountId
+        return {
+            loginId: loginId,
+            accountId: account._id,
+            userId: user._id, // Legacy support
+        };
     },
 });
 
@@ -387,54 +717,108 @@ async function findBinaryPlacement(ctx: any, rootId: Id<"users">, strategy: stri
 }
 
 export const getProfile = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        return await ctx.db.get(args.userId);
+        // Support both userId (legacy) and accountId (new multi-account system)
+        if (args.accountId) {
+            return await ctx.db.get(args.accountId);
+        } else if (args.userId) {
+            return await ctx.db.get(args.userId);
+        }
+        return null;
     },
 });
 
 export const getDirectReferrals = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        return await ctx.db
-            .query("users")
-            .withIndex("by_referrerId", (q) => q.eq("referrerId", args.userId))
-            .collect();
+        if (args.accountId) {
+            // Query accounts table for direct referrals
+            return await ctx.db
+                .query("accounts")
+                .withIndex("by_referrerId", (q) => q.eq("referrerId", args.accountId))
+                .filter((q) => q.neq(q.field("isDeleted"), true))
+                .collect();
+        } else if (args.userId) {
+            // Legacy: query users table
+            return await ctx.db
+                .query("users")
+                .withIndex("by_referrerId", (q) => q.eq("referrerId", args.userId))
+                .collect();
+        }
+        return [];
     },
 });
 
 export const getIndirectReferrals = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        // 1. Get Direct Referrals
-        const directReferrals = await ctx.db
-            .query("users")
-            .withIndex("by_referrerId", (q) => q.eq("referrerId", args.userId))
-            .collect();
-
-        // 2. Get Indirect Referrals (L2)
-        // We need to query for users whose referrerId is in the directReferrals list
-        // Convex doesn't support "IN" query efficiently for large lists, but for L2 it's manageable
-        // or we can parallelize queries
-
-        const indirectReferrals = [];
-
-        for (const direct of directReferrals) {
-            const l2 = await ctx.db
-                .query("users")
-                .withIndex("by_referrerId", (q) => q.eq("referrerId", direct._id))
+        if (args.accountId) {
+            // 1. Get Direct Referrals (accounts)
+            const directReferrals = await ctx.db
+                .query("accounts")
+                .withIndex("by_referrerId", (q) => q.eq("referrerId", args.accountId))
+                .filter((q) => q.neq(q.field("isDeleted"), true))
                 .collect();
 
-            // Add context about who referred them
-            for (const user of l2) {
-                indirectReferrals.push({
-                    ...user,
-                    referredBy: direct.name
-                });
-            }
-        }
+            // 2. Get Indirect Referrals (L2)
+            const indirectReferrals = [];
 
-        return indirectReferrals;
+            for (const direct of directReferrals) {
+                const l2 = await ctx.db
+                    .query("accounts")
+                    .withIndex("by_referrerId", (q) => q.eq("referrerId", direct._id))
+                    .filter((q) => q.neq(q.field("isDeleted"), true))
+                    .collect();
+
+                // Add context about who referred them
+                for (const account of l2) {
+                    indirectReferrals.push({
+                        ...account,
+                        referredBy: direct.name
+                    });
+                }
+            }
+
+            return indirectReferrals;
+        } else if (args.userId) {
+            // Legacy: query users table
+            // 1. Get Direct Referrals
+            const directReferrals = await ctx.db
+                .query("users")
+                .withIndex("by_referrerId", (q) => q.eq("referrerId", args.userId))
+                .collect();
+
+            // 2. Get Indirect Referrals (L2)
+            const indirectReferrals = [];
+
+            for (const direct of directReferrals) {
+                const l2 = await ctx.db
+                    .query("users")
+                    .withIndex("by_referrerId", (q) => q.eq("referrerId", direct._id))
+                    .collect();
+
+                // Add context about who referred them
+                for (const user of l2) {
+                    indirectReferrals.push({
+                        ...user,
+                        referredBy: direct.name
+                    });
+                }
+            }
+
+            return indirectReferrals;
+        }
+        return [];
     },
 });
 
@@ -444,64 +828,124 @@ export const getIndirectReferrals = query({
  */
 export const getUnilevelTree = query({
     args: { 
-        userId: v.id("users"),
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
         maxLevels: v.optional(v.number()) // Default to 10, but allow customization
     },
     handler: async (ctx, args) => {
         const maxLevels = args.maxLevels ?? 10;
         
-        async function buildTree(currentUserId: Id<"users">, currentLevel: number): Promise<any> {
-            const user = await ctx.db.get(currentUserId);
-            if (!user) return null;
+        if (args.accountId) {
+            // Build tree using accounts
+            async function buildTree(currentAccountId: Id<"accounts">, currentLevel: number): Promise<any> {
+                const account = await ctx.db.get(currentAccountId);
+                if (!account || account.isDeleted) return null;
 
-            // If we've reached max depth, return just the node without children
-            if (currentLevel >= maxLevels) {
+                // If we've reached max depth, return just the node without children
+                if (currentLevel >= maxLevels) {
+                    return {
+                        name: account.name,
+                        attributes: {
+                            Rank: account.currentRank || "B0",
+                            Volume: `$${(account.teamVolume || 0).toFixed(2)}`,
+                            Directs: 0,
+                            Unlocked: `${account.unlockedLevels || 0}/10`,
+                            Level: currentLevel,
+                            ReferralCode: account.referralCode || "",
+                        },
+                        children: undefined,
+                    };
+                }
+
+                // Get all direct referrals (children in the tree)
+                const directReferrals = await ctx.db
+                    .query("accounts")
+                    .withIndex("by_referrerId", (q) => q.eq("referrerId", currentAccountId))
+                    .filter((q) => q.neq(q.field("isDeleted"), true))
+                    .collect();
+
+                const children = [];
+                
+                // Recursively build tree for each direct referral
+                for (const referral of directReferrals) {
+                    const childTree = await buildTree(referral._id, currentLevel + 1);
+                    if (childTree) {
+                        children.push(childTree);
+                    }
+                }
+
+                return {
+                    name: account.name,
+                    attributes: {
+                        Rank: account.currentRank || "B0",
+                        Volume: `$${(account.teamVolume || 0).toFixed(2)}`,
+                        Directs: directReferrals.length,
+                        Unlocked: `${account.unlockedLevels || 0}/10`,
+                        Level: currentLevel,
+                        ReferralCode: account.referralCode || "",
+                    },
+                    children: children.length > 0 ? children : undefined,
+                };
+            }
+
+            const treeData = await buildTree(args.accountId, 0);
+            return treeData;
+        } else if (args.userId) {
+            // Legacy: build tree using users
+            async function buildTree(currentUserId: Id<"users">, currentLevel: number): Promise<any> {
+                const user = await ctx.db.get(currentUserId);
+                if (!user) return null;
+
+                // If we've reached max depth, return just the node without children
+                if (currentLevel >= maxLevels) {
+                    return {
+                        name: user.name,
+                        attributes: {
+                            Rank: user.currentRank || "B0",
+                            Volume: `$${(user.teamVolume || 0).toFixed(2)}`,
+                            Directs: 0,
+                            Unlocked: `${user.unlockedLevels || 0}/10`,
+                            Level: currentLevel,
+                            Email: user.email || "",
+                        },
+                        children: undefined,
+                    };
+                }
+
+                // Get all direct referrals (children in the tree)
+                const directReferrals = await ctx.db
+                    .query("users")
+                    .withIndex("by_referrerId", (q) => q.eq("referrerId", currentUserId))
+                    .collect();
+
+                const children = [];
+                
+                // Recursively build tree for each direct referral
+                for (const referral of directReferrals) {
+                    const childTree = await buildTree(referral._id, currentLevel + 1);
+                    if (childTree) {
+                        children.push(childTree);
+                    }
+                }
+
                 return {
                     name: user.name,
                     attributes: {
                         Rank: user.currentRank || "B0",
                         Volume: `$${(user.teamVolume || 0).toFixed(2)}`,
-                        Directs: 0,
+                        Directs: directReferrals.length,
                         Unlocked: `${user.unlockedLevels || 0}/10`,
                         Level: currentLevel,
                         Email: user.email || "",
                     },
-                    children: undefined,
+                    children: children.length > 0 ? children : undefined,
                 };
             }
 
-            // Get all direct referrals (children in the tree)
-            const directReferrals = await ctx.db
-                .query("users")
-                .withIndex("by_referrerId", (q) => q.eq("referrerId", currentUserId))
-                .collect();
-
-            const children = [];
-            
-            // Recursively build tree for each direct referral
-            for (const referral of directReferrals) {
-                const childTree = await buildTree(referral._id, currentLevel + 1);
-                if (childTree) {
-                    children.push(childTree);
-                }
-            }
-
-            return {
-                name: user.name,
-                attributes: {
-                    Rank: user.currentRank || "B0",
-                    Volume: `$${(user.teamVolume || 0).toFixed(2)}`,
-                    Directs: directReferrals.length,
-                    Unlocked: `${user.unlockedLevels || 0}/10`,
-                    Level: currentLevel,
-                    Email: user.email || "",
-                },
-                children: children.length > 0 ? children : undefined,
-            };
+            const treeData = await buildTree(args.userId, 0);
+            return treeData;
         }
-
-        const treeData = await buildTree(args.userId, 0);
-        return treeData;
+        return null;
     },
 });
 
@@ -557,14 +1001,27 @@ export const updateUserBalance = mutation({
 });
 
 export const getUserEarnings = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        // Get all transactions for this user
-        const transactions = await ctx.db
-            .query("transactions")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .order("desc")
-            .collect();
+        // Get all transactions for this account/user
+        let transactions = [];
+        if (args.accountId) {
+            transactions = await ctx.db
+                .query("transactions")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .order("desc")
+                .collect();
+        } else if (args.userId) {
+            // Legacy: query by userId
+            transactions = await ctx.db
+                .query("transactions")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .order("desc")
+                .collect();
+        }
 
         // Categorize earnings
         // Include both regular types and "bls_earned" transactions that match the category
@@ -691,6 +1148,39 @@ export const getUserById = query({
     },
     handler: async (ctx, args) => {
         return await ctx.db.get(args.userId);
+    },
+});
+
+/**
+ * Helper: Get loginId and accountId from userId (for legacy users)
+ */
+export const getLoginByUserId = query({
+    args: {
+        userId: v.id("users"),
+    },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        if (!user) return null;
+
+        // Find login by email
+        const login = await ctx.db
+            .query("logins")
+            .withIndex("by_email", (q) => q.eq("email", user.email))
+            .first();
+
+        if (!login) return null;
+
+        // Find default account for this login
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_loginId", (q) => q.eq("loginId", login._id))
+            .filter((q) => q.eq(q.field("isDefault"), true))
+            .first();
+
+        return {
+            loginId: login._id,
+            accountId: account?._id || null,
+        };
     },
 });
 

@@ -10,11 +10,11 @@ import {
 } from "lucide-react";
 import { useToast } from "../hooks/useToast";
 
-export function PresaleView({ userId }: { userId: Id<"users"> }) {
+export function PresaleView({ userId }: { userId: Id<"users"> | Id<"accounts"> }) {
     const toast = useToast();
     const config = useCachedQuery(api.presale.getConfig);
-    const userOrders = useCachedQuery(api.presale.getUserOrders, { userId });
-    const userProfile = useCachedQuery(api.users.getProfile, { userId });
+    const userOrders = useCachedQuery(api.presale.getUserOrders, userId ? { accountId: userId as any } : "skip");
+    const userProfile = useCachedQuery(api.users.getProfile, userId ? { accountId: userId as any } : "skip");
     const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
 
     const purchaseNode = useCachedMutation(api.presale.purchaseNode);

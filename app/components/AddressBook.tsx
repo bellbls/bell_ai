@@ -12,7 +12,7 @@ export function AddressBook({ userId, toast }: { userId: string; toast: any }) {
     const [newLabel, setNewLabel] = useState("");
     const [loading, setLoading] = useState(false);
 
-    const addresses = useCachedQuery(api.addressBook.getAddresses, { userId: userId as any });
+    const addresses = useCachedQuery(api.addressBook.getAddresses, userId ? { accountId: userId as any } : "skip");
     const addAddress = useCachedMutation(api.addressBook.addAddress);
     const deleteAddress = useCachedMutation(api.addressBook.deleteAddress);
 
@@ -26,7 +26,7 @@ export function AddressBook({ userId, toast }: { userId: string; toast: any }) {
         setLoading(true);
         try {
             await addAddress({
-                userId: userId as any,
+                accountId: userId as any,
                 address: newAddress,
                 label: newLabel,
             });
@@ -44,7 +44,7 @@ export function AddressBook({ userId, toast }: { userId: string; toast: any }) {
     const handleDelete = async (id: string) => {
         if (!confirm("Are you sure you want to delete this address?")) return;
         try {
-            await deleteAddress({ id: id as any, userId: userId as any });
+            await deleteAddress({ id: id as any, accountId: userId as any });
             toast.success("Address removed");
         } catch (e: any) {
             toast.error("Failed to delete address");

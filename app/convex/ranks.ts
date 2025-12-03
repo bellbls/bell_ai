@@ -11,26 +11,26 @@ function getRankWeight(rank: string): number {
 /**
  * Update team volume for all uplines when a stake is created or expires
  * @param ctx - Mutation context
- * @param userId - User whose stake changed
+ * @param accountId - Account whose stake changed (new system)
  * @param amount - Amount to add (positive) or subtract (negative)
  */
-export async function updateTeamVolume(ctx: MutationCtx, userId: Id<"users">, amount: number) {
-    let currentUser = await ctx.db.get(userId);
-    if (!currentUser) return;
+export async function updateTeamVolume(ctx: MutationCtx, accountId: Id<"accounts">, amount: number) {
+    let currentAccount = await ctx.db.get(accountId);
+    if (!currentAccount) return;
 
-    // 1. Update User's Own Volume (Total Volume = Personal + Team)
-    const newPersonalVolume = Math.max(0, (currentUser.teamVolume || 0) + amount);
-    await ctx.db.patch(currentUser._id, { teamVolume: newPersonalVolume });
+    // 1. Update Account's Own Volume (Total Volume = Personal + Team)
+    const newPersonalVolume = Math.max(0, (currentAccount.teamVolume || 0) + amount);
+    await ctx.db.patch(currentAccount._id, { teamVolume: newPersonalVolume });
 
-    // Check for Rank Update for the user themselves
-    await updateRank(ctx, currentUser._id);
+    // Check for Rank Update for the account themselves
+    await updateRank(ctx, currentAccount._id);
 
     // 2. Traverse up the referral tree
     let depth = 0;
     const MAX_DEPTH = 50; // Reasonable limit for unilevel structure
 
-    while (currentUser && currentUser.referrerId && depth < MAX_DEPTH) {
-        const referrer: any = await ctx.db.get(currentUser.referrerId);
+    while (currentAccount && currentAccount.referrerId && depth < MAX_DEPTH) {
+        const referrer: any = await ctx.db.get(currentAccount.referrerId);
         if (!referrer) break;
 
         // Update volume
@@ -43,7 +43,7 @@ export async function updateTeamVolume(ctx: MutationCtx, userId: Id<"users">, am
         await updateRank(ctx, referrer._id);
 
         // Move up the tree
-        currentUser = referrer;
+        currentAccount = referrer;
         depth++;
     }
 }
@@ -64,9 +64,9 @@ export async function updateTeamVolume(ctx: MutationCtx, userId: Id<"users">, am
  * - Direct Referrals: 5
  * - Structure: 2 of the 5 directs must be B1 or higher
  */
-export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
-    const user = await ctx.db.get(userId);
-    if (!user) return;
+export async function updateRank(ctx: MutationCtx, accountId: Id<"accounts">) {
+    const account = await ctx.db.get(accountId);
+    if (!account) return;
 
     const config = await ctx.db
         .query("configs")
@@ -81,8 +81,8 @@ export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
 
     // Get Direct Referrals for structure check
     const directReferrals = await ctx.db
-        .query("users")
-        .withIndex("by_referrerId", (q) => q.eq("referrerId", userId))
+        .query("accounts")
+        .withIndex("by_referrerId", (q) => q.eq("referrerId", accountId))
         .collect();
 
     // Count active direct referrals (those with active stakes)
@@ -92,7 +92,7 @@ export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
 
     // Check each rank requirement from highest to lowest
     for (const rule of rules) {
-        const volumeMet = user.teamVolume >= rule.minTeamVolume;
+        const volumeMet = account.teamVolume >= rule.minTeamVolume;
         const directsMet = activeDirectsCount >= rule.minDirectReferrals;
 
         let structureMet = true;
@@ -116,20 +116,20 @@ export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
         // All conditions must be met
         if (volumeMet && directsMet && structureMet) {
             newRank = rule.rank;
-            break; // Found highest rank that user qualifies for
+            break; // Found highest rank that account qualifies for
         }
     }
 
     // Update rank if it changed (upgrade or downgrade)
-    if (newRank !== user.currentRank) {
-        const oldRank = user.currentRank;
-        await ctx.db.patch(userId, { currentRank: newRank });
+    if (newRank !== account.currentRank) {
+        const oldRank = account.currentRank;
+        await ctx.db.patch(accountId, { currentRank: newRank });
 
-        // Notify user of rank change
+        // Notify account of rank change
         const isUpgrade = getRankWeight(newRank) > getRankWeight(oldRank);
         await notify(
             ctx,
-            userId,
+            accountId,
             "rank",
             isUpgrade ? "Rank Advancement!" : "Rank Update",
             isUpgrade
@@ -142,9 +142,9 @@ export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
         // Propagate change up the tree
         // This is important because my rank change might affect my referrer's structure requirement
         // Example: If I downgrade from B1 to B0, my referrer might lose B2 qualification
-        if (user.referrerId) {
+        if (account.referrerId) {
             // We don't need to update volume, just check rank
-            await updateRank(ctx, user.referrerId);
+            await updateRank(ctx, account.referrerId);
         }
     }
 }
@@ -153,10 +153,10 @@ export async function updateRank(ctx: MutationCtx, userId: Id<"users">) {
  * Get active direct referrals count (those with active stakes)
  * This is a more strict check for "active referrals"
  */
-async function getActiveDirectReferralsCount(ctx: MutationCtx, userId: Id<"users">): Promise<number> {
+async function getActiveDirectReferralsCount(ctx: MutationCtx, accountId: Id<"accounts">): Promise<number> {
     const directReferrals = await ctx.db
-        .query("users")
-        .withIndex("by_referrerId", (q) => q.eq("referrerId", userId))
+        .query("accounts")
+        .withIndex("by_referrerId", (q) => q.eq("referrerId", accountId))
         .collect();
 
     let activeCount = 0;
@@ -165,7 +165,7 @@ async function getActiveDirectReferralsCount(ctx: MutationCtx, userId: Id<"users
         // Check if this referral has any active stakes
         const activeStakes = await ctx.db
             .query("stakes")
-            .withIndex("by_userId", (q) => q.eq("userId", referral._id))
+            .withIndex("by_accountId", (q) => q.eq("accountId", referral._id))
             .filter((q) => q.eq(q.field("status"), "active"))
             .collect();
 

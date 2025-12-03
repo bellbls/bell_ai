@@ -190,16 +190,32 @@ export const updateBLSConfig = mutation({
  * Get user's BLS balance
  */
 export const getBLSBalance = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        const user = await ctx.db.get(args.userId);
-        if (!user) {
-            throw createError(ErrorCodes.USER_NOT_FOUND);
-        }
+        if (args.accountId) {
+            const account = await ctx.db.get(args.accountId);
+            if (!account) {
+                throw createError(ErrorCodes.USER_NOT_FOUND);
+            }
 
-        return {
-            blsBalance: user.blsBalance || 0,
-        };
+            return {
+                blsBalance: account.blsBalance || 0,
+            };
+        } else if (args.userId) {
+            // Legacy: query by userId
+            const user = await ctx.db.get(args.userId);
+            if (!user) {
+                throw createError(ErrorCodes.USER_NOT_FOUND);
+            }
+
+            return {
+                blsBalance: user.blsBalance || 0,
+            };
+        }
+        return { blsBalance: 0 };
     },
 });
 
@@ -286,7 +302,8 @@ export const deductBLS = internalMutation({
  */
 export const swapBLSToUSDT = mutation({
     args: {
-        userId: v.id("users"),
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
         blsAmount: v.number(),
     },
     handler: async (ctx, args) => {
@@ -312,14 +329,45 @@ export const swapBLSToUSDT = mutation({
             );
         }
 
-        // Get user
-        const user = await ctx.db.get(args.userId);
-        if (!user) {
+        // Get account or user
+        let account = null;
+        let targetId: Id<"accounts"> | Id<"users"> | null = null;
+        
+        if (args.accountId) {
+            account = await ctx.db.get(args.accountId);
+            targetId = args.accountId;
+        } else if (args.userId) {
+            // Legacy: get user and find account
+            const user = await ctx.db.get(args.userId);
+            if (user) {
+                const login = await ctx.db
+                    .query("logins")
+                    .withIndex("by_email", (q) => q.eq("email", user.email))
+                    .first();
+                if (login) {
+                    account = await ctx.db
+                        .query("accounts")
+                        .withIndex("by_loginId", (q) => q.eq("loginId", login._id))
+                        .filter((q) => q.eq(q.field("isDefault"), true))
+                        .first();
+                    if (account) {
+                        targetId = account._id;
+                    }
+                }
+                // Fallback to user if no account found
+                if (!account) {
+                    account = user as any;
+                    targetId = args.userId;
+                }
+            }
+        }
+
+        if (!account || !targetId) {
             throw createError(ErrorCodes.USER_NOT_FOUND);
         }
 
         // Check BLS balance using safe floating-point comparison
-        const currentBLSBalance = user.blsBalance || 0;
+        const currentBLSBalance = account.blsBalance || 0;
         if (!hasSufficientBalance(currentBLSBalance, args.blsAmount)) {
             // Enhanced error message with detailed values for debugging
             const roundedBalance = roundToTwoDecimals(currentBLSBalance);
@@ -336,20 +384,36 @@ export const swapBLSToUSDT = mutation({
         }
         const usdtAmount = args.blsAmount * config.conversionRate;
 
+        // Determine if we're working with account or user
+        const isAccount = args.accountId !== undefined;
+        
         // Deduct BLS
-        await ctx.db.patch(args.userId, {
-            blsBalance: currentBLSBalance - args.blsAmount,
-        });
+        if (isAccount && args.accountId) {
+            await ctx.db.patch(args.accountId, {
+                blsBalance: currentBLSBalance - args.blsAmount,
+            });
+        } else if (args.userId) {
+            await ctx.db.patch(args.userId, {
+                blsBalance: currentBLSBalance - args.blsAmount,
+            });
+        }
 
         // Credit USDT
-        const newUSDTBalance = (user.walletBalance || 0) + usdtAmount;
-        await ctx.db.patch(args.userId, {
-            walletBalance: newUSDTBalance,
-        });
+        const newUSDTBalance = (account.walletBalance || 0) + usdtAmount;
+        if (isAccount && args.accountId) {
+            await ctx.db.patch(args.accountId, {
+                walletBalance: newUSDTBalance,
+            });
+        } else if (args.userId) {
+            await ctx.db.patch(args.userId, {
+                walletBalance: newUSDTBalance,
+            });
+        }
 
         // Create swap request record
         const swapRequestId = await ctx.db.insert("blsSwapRequests", {
-            userId: args.userId,
+            accountId: args.accountId || undefined,
+            userId: args.userId || undefined,  // Keep for backward compatibility
             blsAmount: args.blsAmount,
             usdtAmount: usdtAmount,
             status: "completed",
@@ -362,7 +426,8 @@ export const swapBLSToUSDT = mutation({
 
         // Log BLS deduction transaction
         await ctx.db.insert("transactions", {
-            userId: args.userId,
+            accountId: args.accountId || undefined,
+            userId: args.userId || undefined,  // Keep for backward compatibility
             amount: -args.blsAmount,
             type: "bls_swap",
             referenceId: swapRequestIdString,
@@ -372,7 +437,8 @@ export const swapBLSToUSDT = mutation({
 
         // Log USDT credit transaction
         await ctx.db.insert("transactions", {
-            userId: args.userId,
+            accountId: args.accountId || undefined,
+            userId: args.userId || undefined,  // Keep for backward compatibility
             amount: usdtAmount,
             type: "deposit",
             referenceId: swapRequestIdString,
@@ -380,20 +446,23 @@ export const swapBLSToUSDT = mutation({
             timestamp: Date.now(),
         });
 
-        // Notify user
-        await notify(
-            ctx,
-            args.userId,
-            "earnings",
-            "BLS Swap Completed",
-            `You successfully swapped ${args.blsAmount.toFixed(2)} BLS to ${usdtAmount.toFixed(2)} USDT`,
-            "ArrowRightLeft",
-            {
-                blsAmount: args.blsAmount,
-                usdtAmount: usdtAmount,
-                swapRequestId: swapRequestId,
-            }
-        );
+        // Notify user (use accountId if available, otherwise userId)
+        const notifyId = args.accountId || args.userId;
+        if (notifyId) {
+            await notify(
+                ctx,
+                notifyId,
+                "earnings",
+                "BLS Swap Completed",
+                `You successfully swapped ${args.blsAmount.toFixed(2)} BLS to ${usdtAmount.toFixed(2)} USDT`,
+                "ArrowRightLeft",
+                {
+                    blsAmount: args.blsAmount,
+                    usdtAmount: usdtAmount,
+                    swapRequestId: swapRequestId,
+                }
+            );
+        }
 
         return {
             success: true,
@@ -411,15 +480,28 @@ export const swapBLSToUSDT = mutation({
  * Get user's swap history
  */
 export const getSwapHistory = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        const swaps = await ctx.db
-            .query("blsSwapRequests")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .order("desc")
-            .collect();
-
-        return swaps;
+        if (args.accountId) {
+            const swaps = await ctx.db
+                .query("blsSwapRequests")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .order("desc")
+                .collect();
+            return swaps;
+        } else if (args.userId) {
+            // Legacy: query by userId
+            const swaps = await ctx.db
+                .query("blsSwapRequests")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .order("desc")
+                .collect();
+            return swaps;
+        }
+        return [];
     },
 });
 

@@ -92,12 +92,24 @@ export const updatePresaleConfig = mutation({
 // --- User Queries ---
 
 export const getUserOrders = query({
-    args: { userId: v.id("users") },
+    args: { 
+        userId: v.optional(v.id("users")),
+        accountId: v.optional(v.id("accounts")),
+    },
     handler: async (ctx, args) => {
-        return await ctx.db
-            .query("presaleOrders")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .collect();
+        if (args.accountId) {
+            return await ctx.db
+                .query("presaleOrders")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .collect();
+        } else if (args.userId) {
+            // Legacy: query by userId
+            return await ctx.db
+                .query("presaleOrders")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .collect();
+        }
+        return [];
     },
 });
 

@@ -29,7 +29,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const feePercentage = feePercentageConfig ?? 0;
 
     // Fetch saved addresses
-    const savedAddresses = useCachedQuery(api.addressBook.getAddresses, userId ? { userId: userId as any } : "skip");
+    const savedAddresses = useCachedQuery(api.addressBook.getAddresses, userId ? { accountId: userId as any } : "skip");
 
     // Fetch BLS config to check if BLS system is enabled
     const blsConfig = useCachedQuery(api.bls.getBLSConfig);
@@ -38,7 +38,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     // Fetch swapped USDT balance (for withdrawals when BLS enabled)
     const swappedUSDTBalance = useCachedQuery(
         api.wallet.getSwappedUSDTBalance,
-        userId ? { userId: userId as any } : "skip"
+        userId ? { accountId: userId as any } : "skip"
     );
     const availableWithdrawalBalance = isBLSEnabled
         ? (swappedUSDTBalance?.swappedUSDTBalance || 0)
@@ -49,7 +49,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
     // Try to get detailed 2FA requirement (for enabledAt timestamp), but don't break if it's not available
     const twoFactorRequirement = useCachedQuery(api.configs.get2FARequirement, "skip"); // Skip for now to avoid errors
-    const userProfile = useCachedQuery(api.users.getProfile, userId ? { userId: userId as any } : "skip");
+    const userProfile = useCachedQuery(api.users.getProfile, userId ? { accountId: userId as any } : "skip");
     // Use pauseStates.twoFactorRequired as primary source, fallback to twoFactorRequirement if available
     const is2FARequired = pauseStates?.twoFactorRequired ?? twoFactorRequirement?.isRequired ?? false;
     const requires2FA = is2FARequired && userProfile?.twoFactorEnabled;

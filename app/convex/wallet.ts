@@ -115,7 +115,12 @@ export const requestWithdrawal = mutation({
         if (isBLSEnabled) {
             // When BLS is enabled, withdrawals should only come from swapped BLS
             // Check if user has sufficient USDT from BLS swaps
-            const swappedUSDT = await getUserSwappedUSDTBalance(ctx, args.userId);
+            let swappedUSDT = 0;
+            if (args.accountId) {
+                swappedUSDT = await getUserSwappedUSDTBalance(ctx, args.accountId, "account");
+            } else if (args.userId) {
+                swappedUSDT = await getUserSwappedUSDTBalance(ctx, args.userId, "user");
+            }
             
             if (swappedUSDT < args.amount) {
                 throw createError(
@@ -416,14 +421,40 @@ export const getPendingWithdrawals = query({
     },
 });
 
+/**
+ * Get transaction history for an account or user
+ * Supports both accountId (new multi-account system) and userId (legacy)
+ * Updated: 2025-01-03 - Added accountId support for multi-account system
+ */
 export const getTransactionHistory = query({
-    args: { userId: v.id("users") },
+    args: {
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),
+    },
     handler: async (ctx, args) => {
-        return await ctx.db
-            .query("transactions")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .order("desc")
-            .collect();
+        // Validate that at least one parameter is provided
+        if (!args.accountId && !args.userId) {
+            return [];
+        }
+
+        if (args.accountId) {
+            return await ctx.db
+                .query("transactions")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .order("desc")
+                .collect();
+        }
+        
+        if (args.userId) {
+            // Legacy: query by userId
+            return await ctx.db
+                .query("transactions")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .order("desc")
+                .collect();
+        }
+        
+        return [];
     },
 });
 
@@ -431,12 +462,23 @@ export const getTransactionHistory = query({
  * Get user's available USDT balance from BLS swaps (for withdrawals when BLS enabled)
  */
 export const getSwappedUSDTBalance = query({
-    args: { userId: v.id("users") },
+    args: { 
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
+    },
     handler: async (ctx, args) => {
-        const swappedBalance = await getUserSwappedUSDTBalance(ctx, args.userId);
-        return {
-            swappedUSDTBalance: swappedBalance,
-        };
+        if (args.accountId) {
+            const swappedBalance = await getUserSwappedUSDTBalance(ctx, args.accountId, "account");
+            return {
+                swappedUSDTBalance: swappedBalance,
+            };
+        } else if (args.userId) {
+            const swappedBalance = await getUserSwappedUSDTBalance(ctx, args.userId, "user");
+            return {
+                swappedUSDTBalance: swappedBalance,
+            };
+        }
+        return { swappedUSDTBalance: 0 };
     },
 });
 
@@ -541,29 +583,53 @@ export const createWithdrawalNotification = mutation({
  * Calculate user's USDT balance that came from BLS swaps
  * Used to validate withdrawals when BLS system is enabled
  */
-async function getUserSwappedUSDTBalance(ctx: any, userId: Id<"users">): Promise<number> {
-    // Get all completed BLS swap requests for this user
-    const swapRequests = await ctx.db
-        .query("blsSwapRequests")
-        .withIndex("by_userId", (q) => q.eq("userId", userId))
-        .filter((q) => q.eq(q.field("status"), "completed"))
-        .collect();
+async function getUserSwappedUSDTBalance(ctx: any, id: Id<"accounts"> | Id<"users">, type: "account" | "user"): Promise<number> {
+    // Get all completed BLS swap requests
+    let swapRequests = [];
+    if (type === "account") {
+        swapRequests = await ctx.db
+            .query("blsSwapRequests")
+            .withIndex("by_accountId", (q) => q.eq("accountId", id as Id<"accounts">))
+            .filter((q) => q.eq(q.field("status"), "completed"))
+            .collect();
+    } else {
+        swapRequests = await ctx.db
+            .query("blsSwapRequests")
+            .withIndex("by_userId", (q) => q.eq("userId", id as Id<"users">))
+            .filter((q) => q.eq(q.field("status"), "completed"))
+            .collect();
+    }
     
     // Sum up all USDT amounts from completed swaps
     let swappedTotal = swapRequests.reduce((sum, swap) => sum + (swap.usdtAmount || 0), 0);
     
     // Subtract any withdrawals that came from swapped USDT
-    const withdrawals = await ctx.db
-        .query("withdrawals")
-        .withIndex("by_userId", (q: any) => q.eq("userId", userId))
-        .filter((q: any) => 
-            q.or(
-                q.eq(q.field("status"), "sent"),
-                q.eq(q.field("status"), "completed"),
-                q.eq(q.field("status"), "approved")
+    let withdrawals = [];
+    if (type === "account") {
+        withdrawals = await ctx.db
+            .query("withdrawals")
+            .withIndex("by_accountId", (q: any) => q.eq("accountId", id as Id<"accounts">))
+            .filter((q: any) => 
+                q.or(
+                    q.eq(q.field("status"), "sent"),
+                    q.eq(q.field("status"), "completed"),
+                    q.eq(q.field("status"), "approved")
+                )
             )
-        )
-        .collect();
+            .collect();
+    } else {
+        withdrawals = await ctx.db
+            .query("withdrawals")
+            .withIndex("by_userId", (q: any) => q.eq("userId", id as Id<"users">))
+            .filter((q: any) => 
+                q.or(
+                    q.eq(q.field("status"), "sent"),
+                    q.eq(q.field("status"), "completed"),
+                    q.eq(q.field("status"), "approved")
+                )
+            )
+            .collect();
+    }
     
     // Subtract withdrawals that used swapped USDT
     for (const withdrawal of withdrawals) {

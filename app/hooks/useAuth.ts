@@ -34,7 +34,9 @@ interface RegisterCredentials {
 }
 
 export function useAuth() {
-    const [userId, setUserId] = useState<Id<"users"> | null>(null);
+    const [loginId, setLoginId] = useState<Id<"logins"> | null>(null);
+    const [accountId, setAccountId] = useState<Id<"accounts"> | null>(null);
+    const [userId, setUserId] = useState<Id<"users"> | null>(null); // Legacy support
     const [user, setUser] = useState<AuthUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -50,14 +52,39 @@ export function useAuth() {
         userId ? { userId } : "skip"
     );
 
-    // Load user from localStorage on mount
+    // Query to get loginId from userId (for legacy users)
+    const loginFromUser = useQuery(
+        api.users.getLoginByUserId,
+        userId && !loginId ? { userId } : "skip"
+    );
+
+    // Load login and account from localStorage on mount
     useEffect(() => {
-        const storedUserId = localStorage.getItem("userId");
+        const storedLoginId = localStorage.getItem("loginId");
+        const storedAccountId = localStorage.getItem("accountId");
+        const storedUserId = localStorage.getItem("userId"); // Legacy support
+        
+        if (storedLoginId) {
+            setLoginId(storedLoginId as Id<"logins">);
+        }
+        if (storedAccountId) {
+            setAccountId(storedAccountId as Id<"accounts">);
+        }
         if (storedUserId) {
             setUserId(storedUserId as Id<"users">);
         }
         setIsLoading(false);
     }, []);
+
+    // If we have userId but no loginId, try to get loginId from user
+    useEffect(() => {
+        if (userId && !loginId && loginFromUser) {
+            setLoginId(loginFromUser.loginId);
+            if (loginFromUser.accountId) {
+                setAccountId(loginFromUser.accountId);
+            }
+        }
+    }, [userId, loginId, loginFromUser]);
 
     // Update user state when query returns
     useEffect(() => {
@@ -82,28 +109,75 @@ export function useAuth() {
                     // Return 2FA requirement info
                     return {
                         requires2FA: true,
-                        userId: result.userId,
+                        loginId: result.loginId,
+                        accountId: result.accountId,
+                        userId: result.userId, // Legacy
                         gracePeriodInfo: result.gracePeriodInfo || null,
                     };
                 } else {
                     // Login successful but within grace period
-                    const userId = result.userId;
-                    localStorage.setItem("userId", userId);
-                    setUserId(userId);
+                    const loginId = result.loginId;
+                    const accountId = result.accountId;
+                    localStorage.setItem("loginId", loginId);
+                    localStorage.setItem("accountId", accountId);
+                    setLoginId(loginId);
+                    setAccountId(accountId);
+                    
+                    // Track all loginIds the user has logged into
+                    const allLoginIds = JSON.parse(localStorage.getItem("allLoginIds") || "[]");
+                    if (!allLoginIds.includes(loginId)) {
+                        allLoginIds.push(loginId);
+                        localStorage.setItem("allLoginIds", JSON.stringify(allLoginIds));
+                    }
+                    
                     return {
                         success: true,
-                        userId,
+                        loginId,
+                        accountId,
+                        userId: result.userId, // Legacy
                         gracePeriodInfo: result.gracePeriodInfo || null,
                     };
                 }
             }
 
-            // Normal login success (userId string)
-            const userId = result as Id<"users">;
-            localStorage.setItem("userId", userId);
-            setUserId(userId);
+            // New system: result has loginId and accountId
+            if (typeof result === "object" && result !== null && "loginId" in result) {
+                const loginId = result.loginId;
+                const accountId = result.accountId;
+                const userId = result.userId; // Legacy support
+                
+                if (loginId) {
+                    localStorage.setItem("loginId", loginId);
+                    setLoginId(loginId);
+                    
+                    // Track all loginIds the user has logged into
+                    const allLoginIds = JSON.parse(localStorage.getItem("allLoginIds") || "[]");
+                    if (!allLoginIds.includes(loginId)) {
+                        allLoginIds.push(loginId);
+                        localStorage.setItem("allLoginIds", JSON.stringify(allLoginIds));
+                    }
+                }
+                if (accountId) {
+                    localStorage.setItem("accountId", accountId);
+                    setAccountId(accountId);
+                }
+                if (userId) {
+                    localStorage.setItem("userId", userId);
+                    setUserId(userId);
+                }
+                
+                return { success: true, loginId, accountId, userId };
+            }
 
-            return { success: true, userId };
+            // Legacy system: result is userId string
+            if (typeof result === "string" || (typeof result === "object" && result !== null && "legacyUserId" in result)) {
+                const userId = typeof result === "string" ? result : result.legacyUserId;
+                localStorage.setItem("userId", userId);
+                setUserId(userId);
+                return { success: true, userId };
+            }
+
+            return { success: true };
         } catch (error: any) {
             console.error("Login error:", error);
             throw error;
@@ -136,7 +210,7 @@ export function useAuth() {
     const register = async (credentials: RegisterCredentials) => {
         try {
             const clientInfo = await getClientInfo();
-            const userId = await registerMutation({
+            const result = await registerMutation({
                 name: credentials.name,
                 email: credentials.email,
                 password: credentials.password,
@@ -144,7 +218,27 @@ export function useAuth() {
                 ...clientInfo,
             });
 
-            // Store userId in localStorage
+            // New system: result is { loginId, accountId }
+            if (typeof result === "object" && result !== null && "loginId" in result) {
+                const loginId = result.loginId;
+                const accountId = result.accountId;
+                localStorage.setItem("loginId", loginId);
+                localStorage.setItem("accountId", accountId);
+                setLoginId(loginId);
+                setAccountId(accountId);
+                
+                // Track all loginIds the user has logged into
+                const allLoginIds = JSON.parse(localStorage.getItem("allLoginIds") || "[]");
+                if (!allLoginIds.includes(loginId)) {
+                    allLoginIds.push(loginId);
+                    localStorage.setItem("allLoginIds", JSON.stringify(allLoginIds));
+                }
+                
+                return { success: true, loginId, accountId };
+            }
+
+            // Legacy system: result is userId string
+            const userId = result as Id<"users">;
             localStorage.setItem("userId", userId);
             setUserId(userId);
 
@@ -157,13 +251,17 @@ export function useAuth() {
 
     // Logout function
     const logout = () => {
-        localStorage.removeItem("userId");
+        localStorage.removeItem("loginId");
+        localStorage.removeItem("accountId");
+        localStorage.removeItem("userId"); // Legacy
+        setLoginId(null);
+        setAccountId(null);
         setUserId(null);
         setUser(null);
     };
 
     // Check if user is authenticated
-    const isAuthenticated = !!userId && !!user;
+    const isAuthenticated = !!(loginId && accountId) || !!(userId && user);
 
     // Check if user is admin
     const isAdmin = user?.role === "admin";
@@ -173,7 +271,9 @@ export function useAuth() {
 
     return {
         user,
-        userId,
+        userId, // Legacy
+        loginId,
+        accountId,
         isAuthenticated,
         isAdmin,
         isEmailVerified,

@@ -30,13 +30,23 @@ import { SwapToCrypto } from "../components/SwapToCrypto";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTheme } from "../components/providers/ThemeProvider";
 import TwoFactorSetup from "../components/TwoFactorSetup";
+import { AccountSwitcher } from "../components/AccountSwitcher";
+import { AddAccountModal } from "../components/AddAccountModal";
+import { AccountSettings } from "../components/AccountSettings";
+import { AccountProvider, useAccount } from "../contexts/AccountContext";
 
 // Dynamic import for Tree to avoid SSR issues
 const Tree = dynamic(() => import("react-d3-tree"), { ssr: false });
 
-export default function Home() {
+function HomeContent() {
   // Use new auth hook
-  const { user, userId, isAuthenticated, login: authLogin, register: authRegister, logout, completeLoginWith2FA } = useAuth();
+  const { user, userId, loginId, accountId, isAuthenticated, login: authLogin, register: authRegister, logout, completeLoginWith2FA } = useAuth();
+  const { currentAccountId } = useAccount();
+  
+  // Use currentAccountId if available, otherwise fall back to accountId or userId
+  const activeAccountId = currentAccountId || accountId || userId;
+  
+  const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,13 +66,13 @@ export default function Home() {
 
   // Mutations & Queries (keep for other operations)
   const createStake = useCachedMutation(api.stakes.createStake);
-  const userProfile = useCachedQuery(api.users.getProfile, userId ? { userId } : "skip");
-  const stakes = useCachedQuery(api.stakes.getUserStakes, userId ? { userId: userId as any } : "skip");
+  const userProfile = useCachedQuery(api.users.getProfile, activeAccountId ? { accountId: activeAccountId as any } : "skip");
+  const stakes = useCachedQuery(api.stakes.getUserStakes, activeAccountId ? { accountId: activeAccountId as any } : "skip");
   const stakingCycles = useCachedQuery(api.config.get, { key: "staking_cycles" });
 
   // Wallet Mutations & Queries
   const deposit = useCachedMutation(api.wallet.deposit);
-  const transactions = useCachedQuery(api.wallet.getTransactionHistory, userId ? { userId: userId as any } : "skip");
+  const transactions = useCachedQuery(api.wallet.getTransactionHistory, activeAccountId ? { accountId: activeAccountId as any } : "skip");
   const requestWithdrawal = useCachedMutation(api.wallet.requestWithdrawal);
   const requestWithdrawalWith2FA = useAction(api.walletActions.requestWithdrawalWith2FA);
 
@@ -70,17 +80,17 @@ export default function Home() {
   const allUsers = useCachedQuery(api.users.getAllUsers);
 
   // Earnings Query
-  const userEarnings = useCachedQuery(api.users.getUserEarnings, userId ? { userId: userId as any } : "skip");
+  const userEarnings = useCachedQuery(api.users.getUserEarnings, activeAccountId ? { accountId: activeAccountId as any } : "skip");
 
   // System pause states
   const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
 
   // BLS System
   const blsConfig = useCachedQuery(api.bls.getBLSConfig);
-  const blsBalance = useCachedQuery(api.bls.getBLSBalance, userId ? { userId: userId as any } : "skip");
+  const blsBalance = useCachedQuery(api.bls.getBLSBalance, activeAccountId ? { accountId: activeAccountId as any } : "skip");
   
   // Presale - Get user orders for node count
-  const userOrders = useCachedQuery(api.presale.getUserOrders, userId ? { userId: userId as any } : "skip");
+  const userOrders = useCachedQuery(api.presale.getUserOrders, activeAccountId ? { accountId: activeAccountId as any } : "skip");
   
   // Calculate total nodes owned - ensure userOrders is an array (memoized to prevent recalculations)
   const totalNodesOwned = useMemo(() => {
@@ -103,17 +113,22 @@ export default function Home() {
         if (result && typeof result === "object" && "requires2FA" in result) {
           if (result.requires2FA) {
             setRequires2FA(true);
-            setPendingUserId(result.userId);
+            setPendingUserId(result.userId || result.loginId); // Support both formats
             setTwoFactorCode("");
             return;
           } else if (result.gracePeriodInfo) {
             // Login successful but show grace period warning
             setGracePeriodInfo(result.gracePeriodInfo);
-            // Continue with normal login flow
+            // Continue with normal login flow - result already has loginId/accountId
           }
         }
+        
+        // If login succeeded, result should have loginId/accountId or userId
+        // The useAuth hook already handles storing these in localStorage
       } else {
-        await authRegister({ name, email, password, referralCode });
+        const result = await authRegister({ name, email, password, referralCode });
+        // Register now returns { loginId, accountId } or { userId } for legacy
+        // The useAuth hook already handles storing these
       }
       // Clear form
       setName("");
@@ -428,25 +443,25 @@ export default function Home() {
         className={`fixed inset-y-0 left-0 z-50 w-64 bg-theme-secondary/80 backdrop-blur-xl border-r border-theme-primary transition-transform duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
           } lg:relative lg:translate-x-0 flex flex-col`}
       >
-        <div className="p-4 sm:p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg flex items-center justify-center overflow-hidden">
-              <Image
-                src="/images/logos/ailogo.png"
-                alt="BellAi Logo"
-                width={56}
-                height={56}
-                className="w-full h-full object-cover"
-              />
+            <div className="p-4 sm:p-6 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg flex items-center justify-center overflow-hidden">
+                  <Image
+                    src="/images/logos/ailogo.png"
+                    alt="BellAi Logo"
+                    width={56}
+                    height={56}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-theme-secondary">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-theme-secondary">
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
 
         <div className="px-4 sm:px-6 py-4">
           <div className="p-4 bg-theme-tertiary dark:bg-slate-800/50 light:bg-gray-50 rounded-xl border border-theme-secondary dark:border-slate-700/50 light:border-gray-200">
@@ -534,15 +549,30 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             {userId && <NotificationBell userId={userId} />}
-            <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-theme-primary dark:border-slate-800 light:border-gray-200">
-              <div className="text-right hidden sm:block">
-                <div className="text-sm font-medium text-theme-primary">{userProfile?.name}</div>
-                <div className="text-xs text-theme-secondary dark:text-slate-400 light:text-gray-500">{userProfile?.email}</div>
+            {isAuthenticated ? (
+              <AccountProvider loginId={loginId || null}>
+                <AccountSwitcher 
+                  onAddAccount={() => {
+                    if (!loginId) {
+                      toast.info("Please log out and log back in to enable multi-account features");
+                      return;
+                    }
+                    setShowCreateAccountModal(true);
+                  }}
+                  onLogout={logout}
+                />
+              </AccountProvider>
+            ) : (
+              <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-theme-primary dark:border-slate-800 light:border-gray-200">
+                <div className="text-right hidden sm:block">
+                  <div className="text-sm font-medium text-theme-primary">{userProfile?.name}</div>
+                  <div className="text-xs text-theme-secondary dark:text-slate-400 light:text-gray-500">{userProfile?.email}</div>
+                </div>
+                <div className="w-10 h-10 bg-theme-tertiary dark:bg-slate-800 light:bg-indigo-100 rounded-full flex items-center justify-center text-purple-500 dark:text-purple-400 light:text-indigo-600 font-bold border border-theme-secondary dark:border-slate-700 light:border-indigo-200">
+                  {userProfile?.name?.charAt(0).toUpperCase()}
+                </div>
               </div>
-              <div className="w-10 h-10 bg-theme-tertiary dark:bg-slate-800 light:bg-indigo-100 rounded-full flex items-center justify-center text-purple-500 dark:text-purple-400 light:text-indigo-600 font-bold border border-theme-secondary dark:border-slate-700 light:border-indigo-200">
-                {userProfile?.name?.charAt(0).toUpperCase()}
-              </div>
-            </div>
+            )}
           </div>
         </header>
 
@@ -643,8 +673,8 @@ export default function Home() {
             </>
           )}
 
-          {activeTab === "presale" && userId && (
-            <PresaleView userId={userId} />
+          {activeTab === "presale" && activeAccountId && (
+            <PresaleView userId={activeAccountId as any} />
           )}
 
           {activeTab === "staking" && (
@@ -670,7 +700,7 @@ export default function Home() {
               transactions={transactions}
               requestWithdrawal={requestWithdrawal}
               deposit={deposit}
-              userId={userId}
+              userId={activeAccountId}
               toast={toast}
               setActiveTab={setActiveTab}
               pauseStates={pauseStates}
@@ -679,25 +709,44 @@ export default function Home() {
             />
           )}
 
-          {activeTab === "swap" && userId && (
-            <SwapToCrypto userId={userId as any} />
+          {activeTab === "swap" && activeAccountId && (
+            <SwapToCrypto userId={activeAccountId as any} />
           )}
 
           {activeTab === "network" && (
             <NetworkView
               allUsers={allUsers}
-              userId={userId}
+              userId={activeAccountId}
             />
           )}
 
           {activeTab === "settings" && (
-            <SettingsView userProfile={userProfile} toast={toast} />
+            <SettingsView userProfile={userProfile} toast={toast} loginId={loginId} />
           )}
 
         </div>
       </main>
+      
+      {isAuthenticated && (
+        <AddAccountModal
+          isOpen={showCreateAccountModal}
+          onClose={() => setShowCreateAccountModal(false)}
+          loginId={loginId || null}
+        />
+      )}
+      
       <ToastContainer toasts={toast.toasts} removeToast={toast.removeToast} />
     </div >
+  );
+}
+
+export default function Home() {
+  const { loginId } = useAuth();
+  
+  return (
+    <AccountProvider loginId={loginId}>
+      <HomeContent />
+    </AccountProvider>
   );
 }
 
@@ -1101,9 +1150,9 @@ function NetworkView({ allUsers, userId }: any) {
   const [treeData, setTreeData] = useState<any>(null);
   const [maxLevels, setMaxLevels] = useState<number>(5); // Default to 5 levels for performance
 
-  const directReferrals = useCachedQuery(api.users.getDirectReferrals, userId ? { userId: userId as any } : "skip");
-  const indirectReferrals = useCachedQuery(api.users.getIndirectReferrals, userId ? { userId: userId as any } : "skip");
-  const unilevelTree = useCachedQuery(api.users.getUnilevelTree, userId ? { userId: userId as any, maxLevels } : "skip");
+  const directReferrals = useCachedQuery(api.users.getDirectReferrals, userId ? { accountId: userId as any } : "skip");
+  const indirectReferrals = useCachedQuery(api.users.getIndirectReferrals, userId ? { accountId: userId as any } : "skip");
+  const unilevelTree = useCachedQuery(api.users.getUnilevelTree, userId ? { accountId: userId as any, maxLevels } : "skip");
 
   // Set tree data from backend query
   // Use a ref to track the previous tree to prevent infinite loops
@@ -1464,7 +1513,7 @@ function EarningsView({ userEarnings, blsConfig, pauseStates }: any) {
   );
 }
 
-function SettingsView({ userProfile, toast }: any) {
+function SettingsView({ userProfile, toast, loginId }: any) {
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1675,6 +1724,21 @@ function SettingsView({ userProfile, toast }: any) {
       <section className="lg:col-span-2 bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
         <AddressBook userId={userProfile?._id} toast={toast} />
       </section>
+
+      {/* Account Management Section */}
+      {loginId && (
+        <section className="lg:col-span-2 bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold text-theme-primary mb-2">Account Management</h2>
+            <p className="text-sm text-theme-secondary">
+              Create and manage multiple accounts. Each account operates independently with its own wallet, stakes, and referral network.
+            </p>
+          </div>
+          <AccountProvider loginId={loginId}>
+            <AccountSettings loginId={loginId} />
+          </AccountProvider>
+        </section>
+      )}
     </div >
   )
 }

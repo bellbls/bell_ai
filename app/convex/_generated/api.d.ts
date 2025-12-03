@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accounts from "../accounts.js";
 import type * as addressBook from "../addressBook.js";
 import type * as admin from "../admin.js";
 import type * as adminAlerts from "../adminAlerts.js";
@@ -33,6 +34,7 @@ import type * as inspect_user from "../inspect_user.js";
 import type * as integration_depositIntegrationTests from "../integration/depositIntegrationTests.js";
 import type * as lowBalanceMonitor from "../lowBalanceMonitor.js";
 import type * as migrations from "../migrations.js";
+import type * as migrations_migrateToMultiAccount from "../migrations/migrateToMultiAccount.js";
 import type * as multiNetworkDepositListener from "../multiNetworkDepositListener.js";
 import type * as networkManagement from "../networkManagement.js";
 import type * as notifications from "../notifications.js";
@@ -77,6 +79,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accounts: typeof accounts;
   addressBook: typeof addressBook;
   admin: typeof admin;
   adminAlerts: typeof adminAlerts;
@@ -102,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   "integration/depositIntegrationTests": typeof integration_depositIntegrationTests;
   lowBalanceMonitor: typeof lowBalanceMonitor;
   migrations: typeof migrations;
+  "migrations/migrateToMultiAccount": typeof migrations_migrateToMultiAccount;
   multiNetworkDepositListener: typeof multiNetworkDepositListener;
   networkManagement: typeof networkManagement;
   notifications: typeof notifications;

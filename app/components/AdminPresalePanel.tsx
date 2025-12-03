@@ -53,7 +53,7 @@ export function AdminPresalePanel() {
     // Initialize supply amount when stats load - MUST be before any conditional returns
     useEffect(() => {
         if (stats?.config && supplyAmount === 0) {
-            setSupplyAmount(stats.config.totalNodes);
+            setSupplyAmount(stats.config?.totalNodes || 0);
         }
     }, [stats?.config, supplyAmount]);
 
@@ -168,15 +168,151 @@ export function AdminPresalePanel() {
         );
     }
 
-    const { config, totalRevenue, soldNodes, totalNodes, uniqueBuyers, avgNodesPerUser, dailySales, recentOrders } = stats;
+    const { config, totalRevenue, soldNodes, totalNodes, uniqueBuyers, avgNodesPerUser, dailySales, recentOrders } = stats || {};
+    
+    // Safety check: if config doesn't exist, show initialization screen
+    if (!config) {
+        const handleInit = async () => {
+            setIsInitializing(true);
+            try {
+                const now = Date.now();
+                await initialize({
+                    totalNodes: initConfig.totalNodes,
+                    pricePerNode: initConfig.pricePerNode,
+                    perUserLimit: initConfig.perUserLimit,
+                    startDate: now,
+                    endDate: now + (30 * 24 * 60 * 60 * 1000),
+                    vestingSchedule: {
+                        immediate: initConfig.vestingImmediate,
+                        monthly: initConfig.vestingMonthly,
+                        months: initConfig.vestingMonths,
+                    },
+                    stakingCycleDays: initConfig.stakingCycleDays,
+                    stakingDailyRate: initConfig.stakingDailyRate,
+                });
+                toast.success("Presale initialized successfully!");
+            } catch (err: any) {
+                toast.error(err.message || "Initialization failed");
+            } finally {
+                setIsInitializing(false);
+            }
+        };
+
+        return (
+            <div className="max-w-2xl mx-auto p-8 bg-slate-900/50 rounded-2xl border border-slate-800">
+                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                    <Shield className="w-8 h-8 text-purple-400" />
+                    Initialize Presale System
+                </h2>
+                <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Total Nodes</label>
+                            <input
+                                type="number"
+                                value={initConfig.totalNodes}
+                                onChange={(e) => setInitConfig({ ...initConfig, totalNodes: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Price (USDT)</label>
+                            <input
+                                type="number"
+                                value={initConfig.pricePerNode}
+                                onChange={(e) => setInitConfig({ ...initConfig, pricePerNode: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">User Limit</label>
+                            <input
+                                type="number"
+                                value={initConfig.perUserLimit}
+                                onChange={(e) => setInitConfig({ ...initConfig, perUserLimit: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-slate-800 my-4"></div>
+                    <h3 className="font-bold text-slate-300">Vesting Schedule</h3>
+
+                    <div className="grid grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Immediate %</label>
+                            <input
+                                type="number"
+                                value={initConfig.vestingImmediate}
+                                onChange={(e) => setInitConfig({ ...initConfig, vestingImmediate: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Monthly %</label>
+                            <input
+                                type="number"
+                                value={initConfig.vestingMonthly}
+                                onChange={(e) => setInitConfig({ ...initConfig, vestingMonthly: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Months</label>
+                            <input
+                                type="number"
+                                value={initConfig.vestingMonths}
+                                onChange={(e) => setInitConfig({ ...initConfig, vestingMonths: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-slate-800 my-4"></div>
+                    <h3 className="font-bold text-slate-300">Staking Configuration</h3>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Cycle Days</label>
+                            <input
+                                type="number"
+                                value={initConfig.stakingCycleDays}
+                                onChange={(e) => setInitConfig({ ...initConfig, stakingCycleDays: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Daily Rate (%)</label>
+                            <input
+                                type="number"
+                                step="0.1"
+                                value={initConfig.stakingDailyRate}
+                                onChange={(e) => setInitConfig({ ...initConfig, stakingDailyRate: Number(e.target.value) })}
+                                className="w-full p-3 bg-slate-800 rounded-lg border border-slate-700 text-white"
+                            />
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleInit}
+                        disabled={isInitializing}
+                        className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 rounded-lg font-bold text-white transition-all disabled:opacity-50"
+                    >
+                        {isInitializing ? "Initializing..." : "Initialize Presale System"}
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     const handleTogglePresale = async () => {
-        if (!confirm(`Are you sure you want to ${config.isActive ? 'PAUSE' : 'ACTIVATE'} the presale?`)) return;
+        if (!config) return;
+        if (!confirm(`Are you sure you want to ${config?.isActive ? 'PAUSE' : 'ACTIVATE'} the presale?`)) return;
 
         setIsToggling(true);
         try {
             await togglePresale({});
-            toast.success(`Presale ${config.isActive ? 'paused' : 'activated'} successfully`);
+            toast.success(`Presale ${config?.isActive ? 'paused' : 'activated'} successfully`);
         } catch (err: any) {
             toast.error(err.message || "Action failed");
         } finally {
@@ -243,26 +379,26 @@ export function AdminPresalePanel() {
                         <div className="flex flex-wrap items-center gap-4 text-sm">
                             <div>
                                 <span className="text-slate-400">Status: </span>
-                                <span className={`font-bold ${config.isActive ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                                    {config.isActive ? 'ACTIVE' : 'PAUSED'}
+                                <span className={`font-bold ${config?.isActive ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                                    {config?.isActive ? 'ACTIVE' : 'PAUSED'}
                                 </span>
                             </div>
                             <div>
                                 <span className="text-slate-400">Staking: </span>
                                 <span className={`font-bold ${
-                                    config.stakingOpen 
+                                    config?.stakingOpen 
                                         ? 'text-emerald-400' 
-                                        : (config.isActive ? 'text-red-400' : 'text-slate-400')
+                                        : (config?.isActive ? 'text-red-400' : 'text-slate-400')
                                 }`}>
-                                    {config.stakingOpen 
+                                    {config?.stakingOpen 
                                         ? 'OPEN' 
-                                        : (config.isActive ? 'PAUSED (Presale Active)' : 'CLOSED')}
+                                        : (config?.isActive ? 'PAUSED (Presale Active)' : 'CLOSED')}
                                 </span>
                             </div>
                             <div>
                                 <span className="text-slate-400">Supply: </span>
                                 <span className="font-bold text-white">
-                                    {config.totalNodes.toLocaleString()} nodes
+                                    {config?.totalNodes?.toLocaleString() || '0'} nodes
                                 </span>
                             </div>
                         </div>
@@ -271,16 +407,16 @@ export function AdminPresalePanel() {
                         <button
                             onClick={handleTogglePresale}
                             disabled={isToggling}
-                            className={`px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all ${config.isActive
+                            className={`px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-all ${config?.isActive
                                     ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 border border-yellow-500/30'
                                     : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30'
                                 }`}
                         >
-                            {config.isActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                            {config.isActive ? 'Pause Presale' : 'Activate Presale'}
+                            {config?.isActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                            {config?.isActive ? 'Pause Presale' : 'Activate Presale'}
                         </button>
 
-                        {!config.stakingOpen && (
+                        {!config?.stakingOpen && (
                             <button
                                 onClick={handleOpenStaking}
                                 disabled={isOpeningStaking}
@@ -313,7 +449,7 @@ export function AdminPresalePanel() {
                         {!isEditingSupply ? (
                             <button
                                 onClick={() => {
-                                    setSupplyAmount(config.totalNodes);
+                                    setSupplyAmount(config?.totalNodes || 0);
                                     setIsEditingSupply(true);
                                 }}
                                 className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium flex items-center gap-2 transition-all"
@@ -341,7 +477,7 @@ export function AdminPresalePanel() {
                                 <button
                                     onClick={() => {
                                         setIsEditingSupply(false);
-                                        setSupplyAmount(config.totalNodes);
+                                        setSupplyAmount(config?.totalNodes || 0);
                                     }}
                                     className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium"
                                 >
@@ -353,7 +489,7 @@ export function AdminPresalePanel() {
                     <div className="grid grid-cols-3 gap-4 text-sm">
                         <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                             <div className="text-slate-400 mb-1">Total Supply</div>
-                            <div className="text-xl font-bold text-white">{config.totalNodes.toLocaleString()}</div>
+                            <div className="text-xl font-bold text-white">{config?.totalNodes?.toLocaleString() || '0'}</div>
                         </div>
                         <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                             <div className="text-slate-400 mb-1">Sold</div>
@@ -361,7 +497,7 @@ export function AdminPresalePanel() {
                         </div>
                         <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                             <div className="text-slate-400 mb-1">Remaining</div>
-                            <div className="text-xl font-bold text-indigo-400">{(config.totalNodes - soldNodes).toLocaleString()}</div>
+                            <div className="text-xl font-bold text-indigo-400">{((config?.totalNodes || 0) - (soldNodes || 0)).toLocaleString()}</div>
                         </div>
                     </div>
                 </div>

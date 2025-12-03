@@ -6,22 +6,39 @@ const LOCK_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export const addAddress = mutation({
     args: {
-        userId: v.id("users"),
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
         address: v.string(),
         label: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        // Determine which ID to use
+        const targetId = args.accountId || args.userId;
+        if (!targetId) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Either accountId or userId must be provided");
+        }
+
         // 1. Validate Address (Basic length check for TRC20)
         if (args.address.length < 10) {
             throw createError(ErrorCodes.VALIDATION_ERROR, "Invalid wallet address");
         }
 
         // 2. Check for duplicates
-        const existing = await ctx.db
-            .query("saved_wallets")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .filter((q) => q.eq(q.field("address"), args.address))
-            .unique();
+        let existing = null;
+        if (args.accountId) {
+            existing = await ctx.db
+                .query("saved_wallets")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .filter((q) => q.eq(q.field("address"), args.address))
+                .unique();
+        } else if (args.userId) {
+            // Legacy: check by userId
+            existing = await ctx.db
+                .query("saved_wallets")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .filter((q) => q.eq(q.field("address"), args.address))
+                .unique();
+        }
 
         if (existing) {
             throw createError(ErrorCodes.VALIDATION_ERROR, "Address already exists in your address book");
@@ -30,7 +47,8 @@ export const addAddress = mutation({
         // 3. Insert with Locked Status
         const now = Date.now();
         await ctx.db.insert("saved_wallets", {
-            userId: args.userId,
+            accountId: args.accountId || undefined,
+            userId: args.userId || undefined,  // Keep for backward compatibility
             address: args.address,
             label: args.label || "My Wallet",
             status: "locked",
@@ -41,12 +59,25 @@ export const addAddress = mutation({
 });
 
 export const getAddresses = query({
-    args: { userId: v.id("users") },
+    args: { 
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
+    },
     handler: async (ctx, args) => {
-        const addresses = await ctx.db
-            .query("saved_wallets")
-            .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-            .collect();
+        let addresses = [];
+        
+        if (args.accountId) {
+            addresses = await ctx.db
+                .query("saved_wallets")
+                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .collect();
+        } else if (args.userId) {
+            // Legacy: query by userId
+            addresses = await ctx.db
+                .query("saved_wallets")
+                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .collect();
+        }
 
         // Lazy update: Check if any locked addresses should be unlocked
         // Note: Queries cannot mutate data, so we just return the computed status for UI
@@ -64,13 +95,23 @@ export const getAddresses = query({
 export const deleteAddress = mutation({
     args: {
         id: v.id("saved_wallets"),
-        userId: v.id("users"), // Pass userId to ensure ownership
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
     },
     handler: async (ctx, args) => {
         const address = await ctx.db.get(args.id);
-        if (!address || address.userId !== args.userId) {
+        if (!address) {
+            throw createError(ErrorCodes.UNAUTHORIZED, "Address not found");
+        }
+        
+        // Check ownership by accountId or userId
+        const isOwner = (args.accountId && address.accountId === args.accountId) || 
+                       (args.userId && address.userId === args.userId);
+        
+        if (!isOwner) {
             throw createError(ErrorCodes.UNAUTHORIZED, "Address not found or unauthorized");
         }
+        
         await ctx.db.delete(args.id);
     },
 });
