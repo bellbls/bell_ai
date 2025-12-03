@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import { ArrowRightLeft, Wallet, Coins, History, Loader2, AlertCircle, CheckCircle } from "lucide-react";
@@ -17,13 +18,13 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
     const [isSwapping, setIsSwapping] = useState(false);
 
     // Queries
-    const blsConfig = useQuery(api.bls.getBLSConfig);
-    const blsBalance = useQuery(api.bls.getBLSBalance, { userId });
-    const userProfile = useQuery(api.users.getProfile, { userId });
-    const swapHistory = useQuery(api.bls.getSwapHistory, { userId });
+    const blsConfig = useCachedQuery(api.bls.getBLSConfig);
+    const blsBalance = useCachedQuery(api.bls.getBLSBalance, { userId });
+    const userProfile = useCachedQuery(api.users.getProfile, { userId });
+    const swapHistory = useCachedQuery(api.bls.getSwapHistory, { userId });
 
     // Mutations
-    const swapBLSToUSDT = useMutation(api.bls.swapBLSToUSDT);
+    const swapBLSToUSDT = useCachedMutation(api.bls.swapBLSToUSDT);
 
     // Check if queries are still loading
     const isLoading = blsConfig === undefined || blsBalance === undefined || userProfile === undefined;
@@ -327,41 +328,48 @@ export function SwapToCrypto({ userId }: SwapToCryptoProps) {
                     </h3>
                 </div>
                 <div className="max-h-[400px] overflow-y-auto">
-                    {!swapHistory || swapHistory.length === 0 ? (
+                    {!Array.isArray(swapHistory) || swapHistory.length === 0 ? (
                         <div className="p-8 text-center text-slate-500">
                             <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
                             <p>No swap history yet</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-slate-800">
-                            {swapHistory.map((swap: any) => (
-                                <div
-                                    key={swap._id}
-                                    className="p-4 flex items-center justify-between hover:bg-slate-800/50 transition-colors"
-                                >
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center bg-purple-500/20 text-purple-400">
-                                            <ArrowRightLeft className="w-5 h-5" />
-                                        </div>
-                                        <div>
-                                            <div className="font-medium">
-                                                Swapped {swap.blsAmount.toFixed(2)} BLS
+                            {swapHistory.map((swap: any) => {
+                                // Ensure safe defaults for numeric values
+                                const blsAmount = swap.blsAmount ?? 0;
+                                const usdtAmount = swap.usdtAmount ?? 0;
+                                const timestamp = swap.timestamp ?? Date.now();
+                                
+                                return (
+                                    <div
+                                        key={swap._id}
+                                        className="p-4 flex items-center justify-between hover:bg-slate-800/50 transition-colors"
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-purple-500/20 text-purple-400">
+                                                <ArrowRightLeft className="w-5 h-5" />
                                             </div>
-                                            <div className="text-xs text-slate-500">
-                                                {new Date(swap.timestamp).toLocaleString()}
+                                            <div>
+                                                <div className="font-medium">
+                                                    Swapped {blsAmount.toFixed(2)} BLS
+                                                </div>
+                                                <div className="text-xs text-slate-500">
+                                                    {new Date(timestamp).toLocaleString()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="font-bold text-emerald-400">
+                                                +{usdtAmount.toFixed(2)} USDT
+                                            </div>
+                                            <div className="text-xs text-slate-500 capitalize">
+                                                {swap.status || "pending"}
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <div className="font-bold text-emerald-400">
-                                            +{swap.usdtAmount.toFixed(2)} USDT
-                                        </div>
-                                        <div className="text-xs text-slate-500 capitalize">
-                                            {swap.status}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

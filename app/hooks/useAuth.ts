@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import { getClientInfo } from "../lib/security";
@@ -41,6 +41,8 @@ export function useAuth() {
     // Mutations
     const loginMutation = useMutation(api.users.login);
     const registerMutation = useMutation(api.users.register);
+    // Actions (for 2FA - needs Node.js APIs)
+    const completeLoginWith2FAAction = useAction(api.twoFactorActions.completeLoginWith2FA);
 
     // Queries
     const userQuery = useQuery(
@@ -68,19 +70,64 @@ export function useAuth() {
     const login = async (credentials: LoginCredentials) => {
         try {
             const clientInfo = await getClientInfo();
-            const userId = await loginMutation({
+            const result = await loginMutation({
                 email: credentials.email,
                 password: credentials.password,
                 ...clientInfo,
             });
 
-            // Store userId in localStorage
+            // Check if 2FA is required
+            if (typeof result === "object" && result !== null && "requires2FA" in result) {
+                if (result.requires2FA) {
+                    // Return 2FA requirement info
+                    return {
+                        requires2FA: true,
+                        userId: result.userId,
+                        gracePeriodInfo: result.gracePeriodInfo || null,
+                    };
+                } else {
+                    // Login successful but within grace period
+                    const userId = result.userId;
+                    localStorage.setItem("userId", userId);
+                    setUserId(userId);
+                    return {
+                        success: true,
+                        userId,
+                        gracePeriodInfo: result.gracePeriodInfo || null,
+                    };
+                }
+            }
+
+            // Normal login success (userId string)
+            const userId = result as Id<"users">;
             localStorage.setItem("userId", userId);
             setUserId(userId);
 
             return { success: true, userId };
         } catch (error: any) {
             console.error("Login error:", error);
+            throw error;
+        }
+    };
+
+    // Complete login with 2FA code
+    const completeLoginWith2FA = async ({ userId, twoFactorCode }: { userId: Id<"users">; twoFactorCode: string }) => {
+        try {
+            const clientInfo = await getClientInfo();
+            const result = await completeLoginWith2FAAction({
+                userId,
+                code: twoFactorCode,
+                ipAddress: clientInfo.ipAddress,
+                userAgent: clientInfo.userAgent,
+            });
+
+            // Store userId in localStorage
+            localStorage.setItem("userId", result.userId);
+            setUserId(result.userId);
+
+            return { success: true, userId: result.userId };
+        } catch (error: any) {
+            console.error("2FA verification error:", error);
             throw error;
         }
     };
@@ -134,5 +181,6 @@ export function useAuth() {
         login,
         register,
         logout,
+        completeLoginWith2FA,
     };
 }

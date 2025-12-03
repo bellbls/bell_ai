@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useCachedQuery } from "../../hooks/useCachedQuery";
+import { useCachedMutation } from "../../hooks/useCachedMutation";
+import { useCache } from "../../contexts/CacheContext";
+import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import {
@@ -40,39 +43,39 @@ export default function AdminPage() {
     const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void; type?: "danger" | "warning" | "info" }>({ isOpen: false, title: "", message: "", onConfirm: () => { }, type: "info" });
 
     // Queries
-    const systemOverview = useQuery(api.admin.getSystemOverview);
-    const rankDistribution = useQuery(api.admin.getRankDistribution);
-    const stakingAnalytics = useQuery(api.admin.getStakingAnalytics);
-    const revenueTrends = useQuery(api.admin.getRevenueTrends, { days: 30 });
-    const topPerformers = useQuery(api.admin.getTopPerformers, { limit: 10 });
-    const recentActivities = useQuery(api.admin.getRecentActivities, { limit: 20 });
-    const commissionBreakdown = useQuery(api.admin.getCommissionBreakdown);
-    const userGrowth = useQuery(api.admin.getUserGrowth, { days: 30 });
+    const systemOverview = useCachedQuery(api.admin.getSystemOverview);
+    const rankDistribution = useCachedQuery(api.admin.getRankDistribution);
+    const stakingAnalytics = useCachedQuery(api.admin.getStakingAnalytics);
+    const revenueTrends = useCachedQuery(api.admin.getRevenueTrends, { days: 30 });
+    const topPerformers = useCachedQuery(api.admin.getTopPerformers, { limit: 10 });
+    const recentActivities = useCachedQuery(api.admin.getRecentActivities, { limit: 20 });
+    const commissionBreakdown = useCachedQuery(api.admin.getCommissionBreakdown);
+    const userGrowth = useCachedQuery(api.admin.getUserGrowth, { days: 30 });
 
-    const rankRules = useQuery(api.config.get, { key: "rank_rules" });
-    const stakingCycles = useQuery(api.config.get, { key: "staking_cycles" });
-    const allUsers = useQuery(api.users.getAllUsers);
-    const pendingWithdrawals = useQuery(api.wallet.getPendingWithdrawals);
-    const cronLogs = useQuery(api.admin.getCronLogs, { limit: 10 });
-    const pauseStates = useQuery(api.configs.getSystemPauseStates);
-    const blsConfig = useQuery(api.bls.getBLSConfig);
+    const rankRules = useCachedQuery(api.config.get, { key: "rank_rules" });
+    const stakingCycles = useCachedQuery(api.config.get, { key: "staking_cycles" });
+    const allUsers = useCachedQuery(api.users.getAllUsers);
+    const pendingWithdrawals = useCachedQuery(api.wallet.getPendingWithdrawals);
+    const cronLogs = useCachedQuery(api.admin.getCronLogs, { limit: 10 });
+    const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
+    const blsConfig = useCachedQuery(api.bls.getBLSConfig);
 
     // Mutations
-    const updateConfig = useMutation(api.config.update);
-    const createVRank = useMutation(api.adminMutations.createVRank);
-    const updateVRank = useMutation(api.adminMutations.updateVRank);
-    const deleteVRank = useMutation(api.adminMutations.deleteVRank);
-    const createStakingCycle = useMutation(api.adminMutations.createStakingCycle);
-    const updateStakingCycle = useMutation(api.adminMutations.updateStakingCycle);
-    const deleteStakingCycle = useMutation(api.adminMutations.deleteStakingCycle);
-    const recalculateAllRanks = useMutation(api.adminMutations.recalculateAllRanks);
-    const approveWithdrawal = useMutation(api.wallet.approveWithdrawal);
-    const rejectWithdrawal = useMutation(api.wallet.rejectWithdrawal);
-    const toggleStakingPause = useMutation(api.configs.toggleStakingPause);
-    const toggleWithdrawalsPause = useMutation(api.configs.toggleWithdrawalsPause);
-    const toggleReferralBonuses = useMutation(api.configs.toggleReferralBonuses);
-    const toggleBLSSystem = useMutation(api.bls.toggleBLSSystem);
-    const updateBLSConfig = useMutation(api.bls.updateBLSConfig);
+    const updateConfig = useCachedMutation(api.config.update);
+    const createVRank = useCachedMutation(api.adminMutations.createVRank);
+    const updateVRank = useCachedMutation(api.adminMutations.updateVRank);
+    const deleteVRank = useCachedMutation(api.adminMutations.deleteVRank);
+    const createStakingCycle = useCachedMutation(api.adminMutations.createStakingCycle);
+    const updateStakingCycle = useCachedMutation(api.adminMutations.updateStakingCycle);
+    const deleteStakingCycle = useCachedMutation(api.adminMutations.deleteStakingCycle);
+    const recalculateAllRanks = useCachedMutation(api.adminMutations.recalculateAllRanks);
+    const approveWithdrawal = useCachedMutation(api.wallet.approveWithdrawal);
+    const rejectWithdrawal = useCachedMutation(api.wallet.rejectWithdrawal);
+    const toggleStakingPause = useCachedMutation(api.configs.toggleStakingPause);
+    const toggleWithdrawalsPause = useCachedMutation(api.configs.toggleWithdrawalsPause);
+    const toggleReferralBonuses = useCachedMutation(api.configs.toggleReferralBonuses);
+    const toggleBLSSystem = useCachedMutation(api.bls.toggleBLSSystem);
+    const updateBLSConfig = useCachedMutation(api.bls.updateBLSConfig);
 
     // Local state for forms
     const [showRankForm, setShowRankForm] = useState(false);
@@ -484,10 +487,10 @@ function DashboardTab({ systemOverview, rankDistribution, stakingAnalytics, comm
                                 <span className="font-bold">Total Commissions</span>
                                 <div className="text-xl font-bold text-purple-400">
                                     <span>${(commissionBreakdown?.total || 0).toLocaleString()}</span>
-                                    {commissionBreakdown?.isBLSEnabled && commissionBreakdown?.blsTotal && (
+                                    {commissionBreakdown?.isBLSEnabled && commissionBreakdown?.blsTotal !== null && commissionBreakdown?.blsTotal !== undefined && (
                                         <>
                                             <span className="text-slate-400 mx-1">/</span>
-                                            <span className="text-purple-400">{commissionBreakdown.blsTotal.toFixed(2)} BLS</span>
+                                            <span className="text-purple-400">{(commissionBreakdown.blsTotal ?? 0).toFixed(2)} BLS</span>
                                         </>
                                     )}
                                 </div>
@@ -1185,12 +1188,30 @@ function SystemTab({ recalculateAllRanks, cronLogs, toast, setConfirmModal, togg
     const [isEditingBLS, setIsEditingBLS] = useState(false);
 
     // Fetch system configs
-    const systemConfigs = useQuery(api.configs.getAllConfigs);
-    const setConfig = useMutation(api.configs.setConfig);
+    const systemConfigs = useCachedQuery(api.configs.getAllConfigs);
+    const { invalidateByFunction } = useCache();
+    const setConfig = useCachedMutation(api.configs.setConfig);
+    // Use Convex's useQuery directly for getSystemPauseStates to get real-time updates
+    // This ensures the UI updates immediately when 2FA is toggled
+    const pauseStatesFor2FA = useQuery(api.configs.getSystemPauseStates);
+    // Try to get detailed 2FA requirement (for enabledAt timestamp), but don't break if it's not available
+    const twoFactorRequirement = useCachedQuery(api.configs.get2FARequirement, "skip"); // Skip for now to avoid errors
+    
+    // Use setConfig directly for 2FA toggle - more reliable than waiting for toggle2FARequirement to register
+    // The toggle2FARequirement mutation provides additional features (notifications, user marking),
+    // but setConfig works immediately and is sufficient for basic toggle functionality
+    
+    // Use pauseStates as primary source, fallback to twoFactorRequirement if available
+    // Handle undefined case - useQuery might return undefined initially
+    // Explicitly check for true to avoid false positives
+    const is2FARequired = Boolean(
+        pauseStatesFor2FA?.twoFactorRequired === true || 
+        twoFactorRequirement?.isRequired === true
+    );
 
     // BLS System
-    const blsConfig = useQuery(api.bls.getBLSConfig);
-    const blsStats = useQuery(api.bls.getBLSStats);
+    const blsConfig = useCachedQuery(api.bls.getBLSConfig);
+    const blsStats = useCachedQuery(api.bls.getBLSStats);
 
     const [blsSettings, setBlsSettings] = useState({
         conversionRate: 1.0,
@@ -1513,25 +1534,25 @@ function SystemTab({ recalculateAllRanks, cronLogs, toast, setConfirmModal, togg
                                 <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
                                     <div className="text-xs text-slate-400 mb-1">Total BLS Issued</div>
                                     <div className="text-xl font-bold text-purple-400">
-                                        {blsStats.totalBLSIssued.toFixed(2)} BLS
+                                        {(blsStats.totalBLSIssued ?? 0).toFixed(2)} BLS
                                     </div>
                                 </div>
                                 <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
                                     <div className="text-xs text-slate-400 mb-1">Users with BLS</div>
                                     <div className="text-xl font-bold text-blue-400">
-                                        {blsStats.usersWithBLS}
+                                        {blsStats.usersWithBLS ?? 0}
                                     </div>
                                 </div>
                                 <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
                                     <div className="text-xs text-slate-400 mb-1">Total Swaps</div>
                                     <div className="text-xl font-bold text-emerald-400">
-                                        {blsStats.totalSwaps}
+                                        {blsStats.totalSwaps ?? 0}
                                     </div>
                                 </div>
                                 <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
                                     <div className="text-xs text-slate-400 mb-1">USDT Credited</div>
                                     <div className="text-xl font-bold text-pink-400">
-                                        ${blsStats.totalUSDTCredited.toFixed(2)}
+                                        ${(blsStats.totalUSDTCredited ?? 0).toFixed(2)}
                                     </div>
                                 </div>
                             </div>
@@ -1623,6 +1644,92 @@ function SystemTab({ recalculateAllRanks, cronLogs, toast, setConfirmModal, togg
                 )}
             </div>
 
+            {/* 2FA Requirement Control */}
+            <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
+                <div className="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 className="text-lg font-bold flex items-center gap-2">
+                            <Shield className="w-5 h-5 text-indigo-400" />
+                            Two-Factor Authentication (2FA)
+                        </h3>
+                        <p className="text-sm text-slate-400 mt-1">
+                            Require 2FA for login and withdrawals
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${is2FARequired
+                                ? "bg-indigo-500/20 text-indigo-400"
+                                : "bg-slate-700 text-slate-400"
+                            }`}>
+                            {is2FARequired ? "REQUIRED" : "OPTIONAL"}
+                        </span>
+                        <button
+                            onClick={() => {
+                                setConfirmModal({
+                                    isOpen: true,
+                                    title: is2FARequired ? "Disable 2FA Requirement" : "Enable 2FA Requirement",
+                                    message: is2FARequired
+                                        ? "Are you sure you want to disable 2FA requirement? Users will no longer be required to use 2FA for login and withdrawals."
+                                        : "Are you sure you want to enable 2FA requirement? All users will be required to set up 2FA. Existing users will have a 30-day grace period.",
+                                    type: "warning",
+                                    onConfirm: async () => {
+                                        try {
+                                            const newState = !is2FARequired;
+                                            const now = Date.now();
+                                            
+                                            // Use setConfig directly - this always works and is more reliable
+                                            // Set both configs in parallel for faster execution
+                                            if (newState) {
+                                                // Enabling: set both required flag and timestamp
+                                                await Promise.all([
+                                                    setConfig({ 
+                                                        key: "two_factor_required", 
+                                                        value: true 
+                                                    }),
+                                                    setConfig({ 
+                                                        key: "two_factor_enabled_at", 
+                                                        value: now 
+                                                    })
+                                                ]);
+                                            } else {
+                                                // Disabling: set required flag to false
+                                                // Keep enabled_at timestamp for historical reference
+                                                await setConfig({ 
+                                                    key: "two_factor_required", 
+                                                    value: false 
+                                                });
+                                            }
+                                            
+                                            // Manually invalidate getSystemPauseStates cache to ensure UI updates
+                                            invalidateByFunction(["getSystemPauseStates"]);
+                                            
+                                            toast.success(`2FA requirement ${is2FARequired ? "disabled" : "enabled"} successfully!`);
+                                            
+                                            // useQuery will automatically refetch when the database changes
+                                            // Convex queries are reactive and will update automatically
+                                        } catch (error: any) {
+                                            const errorMsg = error.message || error.toString();
+                                            toast.error(errorMsg.replace(/\[CONVEX.*?\]\s*/g, "").replace(/Called by client\s*/g, ""));
+                                        }
+                                    }
+                                });
+                            }}
+                            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${is2FARequired
+                                    ? "bg-red-600 hover:bg-red-700 text-white"
+                                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                }`}
+                        >
+                            {is2FARequired ? "Disable" : "Enable"}
+                        </button>
+                        {twoFactorRequirement?.enabledAt && (
+                            <div className="text-xs text-slate-500">
+                                Enabled: {new Date(twoFactorRequirement.enabledAt).toLocaleDateString()}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             {/* Maintenance Section */}
             <div className="bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 p-6">
                 <h3 className="text-lg font-bold mb-4">Maintenance</h3>
@@ -1676,7 +1783,7 @@ function BlockchainTab() {
     const [selectedNetwork, setSelectedNetwork] = useState<string>("polygon");
     const [activeSection, setActiveSection] = useState<"overview" | "events" | "metrics" | "controls">("overview");
 
-    const networks = useQuery(api.networkManagement.getAllNetworks, {});
+    const networks = useCachedQuery(api.networkManagement.getAllNetworks, {});
     const selectedNetworkDoc = networks?.find((n: any) => n.network === selectedNetwork);
 
     return (

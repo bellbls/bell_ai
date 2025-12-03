@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useAction } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import {
   Wallet, TrendingUp, Users, Award, ArrowRight,
@@ -27,13 +29,14 @@ import { PresaleView } from "../components/PresaleView";
 import { SwapToCrypto } from "../components/SwapToCrypto";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTheme } from "../components/providers/ThemeProvider";
+import TwoFactorSetup from "../components/TwoFactorSetup";
 
 // Dynamic import for Tree to avoid SSR issues
 const Tree = dynamic(() => import("react-d3-tree"), { ssr: false });
 
 export default function Home() {
   // Use new auth hook
-  const { user, userId, isAuthenticated, login: authLogin, register: authRegister, logout } = useAuth();
+  const { user, userId, isAuthenticated, login: authLogin, register: authRegister, logout, completeLoginWith2FA } = useAuth();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -44,49 +47,71 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [gracePeriodInfo, setGracePeriodInfo] = useState<{ daysRemaining?: number; isFirstLogin?: boolean } | null>(null);
   const toast = useToast();
   const { theme } = useTheme();
 
   // Mutations & Queries (keep for other operations)
-  const createStake = useMutation(api.stakes.createStake);
-  const userProfile = useQuery(api.users.getProfile, userId ? { userId } : "skip");
-  const stakes = useQuery(api.stakes.getUserStakes, userId ? { userId: userId as any } : "skip");
-  const stakingCycles = useQuery(api.config.get, { key: "staking_cycles" });
+  const createStake = useCachedMutation(api.stakes.createStake);
+  const userProfile = useCachedQuery(api.users.getProfile, userId ? { userId } : "skip");
+  const stakes = useCachedQuery(api.stakes.getUserStakes, userId ? { userId: userId as any } : "skip");
+  const stakingCycles = useCachedQuery(api.config.get, { key: "staking_cycles" });
 
   // Wallet Mutations & Queries
-  const deposit = useMutation(api.wallet.deposit);
-  const transactions = useQuery(api.wallet.getTransactionHistory, userId ? { userId: userId as any } : "skip");
-  const requestWithdrawal = useMutation(api.wallet.requestWithdrawal);
+  const deposit = useCachedMutation(api.wallet.deposit);
+  const transactions = useCachedQuery(api.wallet.getTransactionHistory, userId ? { userId: userId as any } : "skip");
+  const requestWithdrawal = useCachedMutation(api.wallet.requestWithdrawal);
+  const requestWithdrawalWith2FA = useAction(api.walletActions.requestWithdrawalWith2FA);
 
   // Network Queries
-  const allUsers = useQuery(api.users.getAllUsers);
+  const allUsers = useCachedQuery(api.users.getAllUsers);
 
   // Earnings Query
-  const userEarnings = useQuery(api.users.getUserEarnings, userId ? { userId: userId as any } : "skip");
+  const userEarnings = useCachedQuery(api.users.getUserEarnings, userId ? { userId: userId as any } : "skip");
 
   // System pause states
-  const pauseStates = useQuery(api.configs.getSystemPauseStates);
+  const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
 
   // BLS System
-  const blsConfig = useQuery(api.bls.getBLSConfig);
-  const blsBalance = useQuery(api.bls.getBLSBalance, userId ? { userId: userId as any } : "skip");
+  const blsConfig = useCachedQuery(api.bls.getBLSConfig);
+  const blsBalance = useCachedQuery(api.bls.getBLSBalance, userId ? { userId: userId as any } : "skip");
   
   // Presale - Get user orders for node count
-  const userOrders = useQuery(api.presale.getUserOrders, userId ? { userId: userId as any } : "skip");
+  const userOrders = useCachedQuery(api.presale.getUserOrders, userId ? { userId: userId as any } : "skip");
   
-  // Calculate total nodes owned
-  const totalNodesOwned = userOrders?.reduce((sum, order) => {
-    if (order.status === "confirmed" || order.status === "converted") {
-      return sum + order.quantity;
-    }
-    return sum;
-  }, 0) || 0;
+  // Calculate total nodes owned - ensure userOrders is an array (memoized to prevent recalculations)
+  const totalNodesOwned = useMemo(() => {
+    if (!Array.isArray(userOrders)) return 0;
+    return userOrders.reduce((sum, order) => {
+      if (order.status === "confirmed" || order.status === "converted") {
+        return sum + (order.quantity ?? 0);
+      }
+      return sum;
+    }, 0);
+  }, [userOrders]);
 
   const handleAuth = async () => {
     setError("");
     try {
       if (isLogin) {
-        await authLogin({ email, password });
+        const result = await authLogin({ email, password });
+        
+        // Check if 2FA is required
+        if (result && typeof result === "object" && "requires2FA" in result) {
+          if (result.requires2FA) {
+            setRequires2FA(true);
+            setPendingUserId(result.userId);
+            setTwoFactorCode("");
+            return;
+          } else if (result.gracePeriodInfo) {
+            // Login successful but show grace period warning
+            setGracePeriodInfo(result.gracePeriodInfo);
+            // Continue with normal login flow
+          }
+        }
       } else {
         await authRegister({ name, email, password, referralCode });
       }
@@ -95,6 +120,10 @@ export default function Home() {
       setEmail("");
       setPassword("");
       setReferralCode("");
+      setRequires2FA(false);
+      setTwoFactorCode("");
+      setPendingUserId(null);
+      setGracePeriodInfo(null);
     } catch (e: any) {
       // Extract clean error message from Convex errors
       let msg = e.message || e.toString();
@@ -126,6 +155,46 @@ export default function Home() {
         // Use the cleaned message
         setError(msg.trim());
       }
+    }
+  };
+
+  const handle2FAVerification = async () => {
+    if (!pendingUserId || twoFactorCode.length !== 6) {
+      setError("Please enter a valid 6-digit code");
+      return;
+    }
+
+    setError("");
+    try {
+      await completeLoginWith2FA({ userId: pendingUserId as any, twoFactorCode });
+      // Clear form
+      setName("");
+      setEmail("");
+      setPassword("");
+      setReferralCode("");
+      setRequires2FA(false);
+      setTwoFactorCode("");
+      setPendingUserId(null);
+      setGracePeriodInfo(null);
+    } catch (e: any) {
+      let msg = e.message || e.toString();
+      msg = msg
+        .replace(/Uncaught AppError: /, "")
+        .replace(/Uncaught Error: /, "")
+        .replace(/Uncaught ConvexError: /, "")
+        .replace(/\[CONVEX.*?\] /, "")
+        .replace(/Server Error\s*/, "")
+        .replace(/\[Request ID: [a-f0-9]+\]\s*/gi, "")
+        .replace(/\s+at\s+\w+\s+\([^)]+\)/g, "")
+        .replace(/\s*Called by (client|server|action|mutation|query).*/gi, "")
+        .replace(/\s+\(\.\.\/[^)]+\)/g, "");
+
+      if (msg.includes("TWO_FACTOR_INVALID_CODE") || msg.includes("Invalid")) {
+        setError("Invalid 2FA code. Please try again.");
+      } else {
+        setError(msg.trim());
+      }
+      setTwoFactorCode("");
     }
   };
 
@@ -267,12 +336,84 @@ export default function Home() {
               </div>
             )}
 
-            <button
-              onClick={handleAuth}
-              className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-xl font-bold shadow-lg shadow-purple-500/25 transition-all mt-4"
-            >
-              {isLogin ? "Sign In" : "Get Started"}
-            </button>
+            {requires2FA && isLogin && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300 space-y-4">
+                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield className="w-5 h-5 text-indigo-400" />
+                    <h3 className="text-sm font-semibold text-indigo-400">Two-Factor Authentication Required</h3>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Please enter the 6-digit code from your authenticator app.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-theme-secondary mb-1">2FA Code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    className="w-full p-3 sm:p-3 text-base sm:text-sm bg-theme-tertiary dark:bg-slate-800/50 light:bg-white rounded-xl border border-theme-secondary dark:border-slate-700 light:border-gray-300 focus:border-purple-500 dark:focus:border-purple-500 light:focus:border-indigo-500 outline-none transition-all text-center text-2xl tracking-widest font-mono text-theme-primary"
+                    placeholder="000000"
+                    value={twoFactorCode}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, "");
+                      setTwoFactorCode(value);
+                      setError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && twoFactorCode.length === 6) {
+                        handle2FAVerification();
+                      }
+                    }}
+                    autoFocus
+                  />
+                </div>
+                <button
+                  onClick={handle2FAVerification}
+                  disabled={twoFactorCode.length !== 6}
+                  className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 rounded-xl font-bold shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Verify Code
+                </button>
+                <button
+                  onClick={() => {
+                    setRequires2FA(false);
+                    setTwoFactorCode("");
+                    setPendingUserId(null);
+                    setError("");
+                  }}
+                  className="w-full text-slate-400 hover:text-slate-300 py-2 text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {!requires2FA && (
+              <button
+                onClick={handleAuth}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-xl font-bold shadow-lg shadow-purple-500/25 transition-all mt-4"
+              >
+                {isLogin ? "Sign In" : "Get Started"}
+              </button>
+            )}
+
+            {gracePeriodInfo && !requires2FA && (
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 flex items-start gap-2 text-yellow-400 text-sm">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold mb-1">2FA Setup Required</p>
+                  <p className="text-xs text-yellow-300/80">
+                    {gracePeriodInfo.isFirstLogin 
+                      ? "Please set up two-factor authentication in Settings. You have 30 days to complete setup."
+                      : `You have ${gracePeriodInfo.daysRemaining} days remaining to set up 2FA.`
+                    }
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -716,32 +857,35 @@ function StakingView({ stakingCycles, stakes, handleStake, toast, userProfile, p
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {stakes?.map((stake: any) => {
-                // Check if this is a 1-year stake (likely from presale conversion)
-                const isPresaleStake = stake.cycleDays === 365;
-                return (
-                  <tr key={stake._id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="p-6">
-                      <div className="font-bold text-white">{stake.cycleDays} Days</div>
-                      {isPresaleStake && (
-                        <div className="text-xs text-purple-400 mt-1 flex items-center gap-1">
-                          <Award className="w-3 h-3" />
-                          From Presale
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-4 sm:p-6 text-theme-primary dark:text-slate-300 light:text-gray-900">${stake.amount.toLocaleString()}</td>
-                    <td className="p-4 sm:p-6 text-emerald-500 dark:text-emerald-400 light:text-emerald-600 font-medium">+{stake.dailyRate}%</td>
-                    <td className="p-4 sm:p-6 text-theme-secondary dark:text-slate-400 light:text-gray-600">{new Date(stake.endDate).toLocaleDateString()}</td>
-                    <td className="p-4 sm:p-6">
-                      <span className="px-3 py-1 bg-emerald-500/10 dark:bg-emerald-500/10 light:bg-emerald-100 text-emerald-500 dark:text-emerald-400 light:text-emerald-700 rounded-full text-xs font-bold uppercase">
-                        {stake.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-              {(!stakes || stakes.length === 0) && (
+              {Array.isArray(stakes) && stakes.length > 0 ? (
+                stakes.map((stake: any) => {
+                  // Check if this is a 1-year stake (likely from presale conversion)
+                  const isPresaleStake = stake.cycleDays === 365;
+                  const safeAmount = stake.amount ?? 0;
+                  const safeEndDate = stake.endDate ?? Date.now();
+                  return (
+                    <tr key={stake._id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="p-6">
+                        <div className="font-bold text-white">{stake.cycleDays ?? 0} Days</div>
+                        {isPresaleStake && (
+                          <div className="text-xs text-purple-400 mt-1 flex items-center gap-1">
+                            <Award className="w-3 h-3" />
+                            From Presale
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-4 sm:p-6 text-theme-primary dark:text-slate-300 light:text-gray-900">${safeAmount.toLocaleString()}</td>
+                      <td className="p-4 sm:p-6 text-emerald-500 dark:text-emerald-400 light:text-emerald-600 font-medium">+{stake.dailyRate ?? 0}%</td>
+                      <td className="p-4 sm:p-6 text-theme-secondary dark:text-slate-400 light:text-gray-600">{new Date(safeEndDate).toLocaleDateString()}</td>
+                      <td className="p-4 sm:p-6">
+                        <span className="px-3 py-1 bg-emerald-500/10 dark:bg-emerald-500/10 light:bg-emerald-100 text-emerald-500 dark:text-emerald-400 light:text-emerald-700 rounded-full text-xs font-bold uppercase">
+                          {stake.status || "active"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-theme-tertiary dark:text-slate-500 light:text-gray-500">
                     No active investments found. Start staking today!
@@ -792,13 +936,16 @@ function WalletView({ userProfile, transactions, requestWithdrawal, deposit, use
     }
   };
 
-  const handleWithdrawConfirm = async (amount: number, address: string) => {
+  const handleWithdrawConfirm = async (amount: number, address: string, network: string, twoFactorCode?: string) => {
     if (!userId) return;
     try {
-      const result = await requestWithdrawal({
+      // Use the action that verifies 2FA before processing withdrawal
+      const result = await requestWithdrawalWith2FA({
         userId: userId as any,
         amount: amount,
         address: address,
+        network: network || "polygon", // Default network if not provided
+        twoFactorCode: twoFactorCode,
       });
       toast.success(result.message || "Withdrawal requested successfully!");
     } catch (e: any) {
@@ -898,30 +1045,34 @@ function WalletView({ userProfile, transactions, requestWithdrawal, deposit, use
             <History className="w-5 h-5 text-theme-secondary dark:text-slate-400 light:text-gray-600" /> Transaction History
           </h2>
           <div className="bg-theme-card dark:bg-slate-900/50 light:bg-white backdrop-blur-sm rounded-2xl border border-theme-primary dark:border-slate-800 light:border-gray-200 overflow-hidden max-h-[600px] overflow-y-auto shadow-sm dark:shadow-none light:shadow-md">
-            {(!transactions || transactions.length === 0) ? (
+            {(!Array.isArray(transactions) || transactions.length === 0) ? (
               <div className="p-8 text-center text-theme-tertiary dark:text-slate-500 light:text-gray-500">No transactions yet.</div>
             ) : (
               <div className="divide-y divide-theme-primary dark:divide-slate-800 light:divide-gray-200">
-                {transactions.map((tx: any) => (
-                  <div key={tx._id} className="p-4 flex items-center justify-between hover:bg-theme-hover dark:hover:bg-slate-800/50 light:hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tx.amount > 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
-                        }`}>
-                        {tx.amount > 0 ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                {transactions.map((tx: any) => {
+                  const safeAmount = tx.amount ?? 0;
+                  const safeTimestamp = tx.timestamp ?? Date.now();
+                  return (
+                    <div key={tx._id} className="p-4 flex items-center justify-between hover:bg-theme-hover dark:hover:bg-slate-800/50 light:hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${safeAmount > 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
+                          }`}>
+                          {safeAmount > 0 ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                        </div>
+                        <div>
+                          <div className="font-medium capitalize">{(tx.type || "transaction").replace('_', ' ')}</div>
+                          <div className="text-xs text-theme-tertiary dark:text-slate-500 light:text-gray-500">{new Date(safeTimestamp).toLocaleString()}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-medium capitalize">{tx.type.replace('_', ' ')}</div>
-                        <div className="text-xs text-theme-tertiary dark:text-slate-500 light:text-gray-500">{new Date(tx.timestamp).toLocaleString()}</div>
+                      <div className="text-right">
+                        <div className={`font-bold ${safeAmount > 0 ? "text-emerald-500 dark:text-emerald-400 light:text-emerald-600" : "text-theme-primary dark:text-white light:text-gray-900"}`}>
+                          {safeAmount > 0 ? "+" : ""}{safeAmount.toFixed(2)} USDT
+                        </div>
+                        <div className="text-xs text-theme-tertiary dark:text-slate-500 light:text-gray-500 capitalize">{tx.status || "completed"}</div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className={`font-bold ${tx.amount > 0 ? "text-emerald-500 dark:text-emerald-400 light:text-emerald-600" : "text-theme-primary dark:text-white light:text-gray-900"}`}>
-                        {tx.amount > 0 ? "+" : ""}{tx.amount.toFixed(2)} USDT
-                      </div>
-                      <div className="text-xs text-theme-tertiary dark:text-slate-500 light:text-gray-500 capitalize">{tx.status || "completed"}</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -948,40 +1099,46 @@ function WalletView({ userProfile, transactions, requestWithdrawal, deposit, use
 function NetworkView({ allUsers, userId }: any) {
   const [activeTab, setActiveTab] = useState<"tree" | "direct" | "indirect">("tree");
   const [treeData, setTreeData] = useState<any>(null);
+  const [maxLevels, setMaxLevels] = useState<number>(5); // Default to 5 levels for performance
 
-  const directReferrals = useQuery(api.users.getDirectReferrals, userId ? { userId: userId as any } : "skip");
-  const indirectReferrals = useQuery(api.users.getIndirectReferrals, userId ? { userId: userId as any } : "skip");
+  const directReferrals = useCachedQuery(api.users.getDirectReferrals, userId ? { userId: userId as any } : "skip");
+  const indirectReferrals = useCachedQuery(api.users.getIndirectReferrals, userId ? { userId: userId as any } : "skip");
+  const unilevelTree = useCachedQuery(api.users.getUnilevelTree, userId ? { userId: userId as any, maxLevels } : "skip");
 
+  // Set tree data from backend query
+  // Use a ref to track the previous tree to prevent infinite loops
+  const prevTreeRef = useRef<string | null>(null);
+  
   useEffect(() => {
-    if (allUsers && userId) {
-      const buildTree = (id: string): any => {
-        const user = allUsers.find((u: any) => u._id === id);
-        if (!user) return null;
-
-        const children = [];
-        if (user.leftLegId) {
-          const left = buildTree(user.leftLegId);
-          if (left) children.push({ ...left, name: "L: " + left.name });
-        }
-        if (user.rightLegId) {
-          const right = buildTree(user.rightLegId);
-          if (right) children.push({ ...right, name: "R: " + right.name });
-        }
-
-        return {
-          name: user.name,
-          attributes: {
-            Rank: user.currentRank,
-            Volume: `$${user.teamVolume}`,
-          },
-          children: children.length > 0 ? children : undefined,
+    // Create a stable string representation to compare
+    const treeString = unilevelTree ? JSON.stringify(unilevelTree) : null;
+    
+    // Only update if the tree data actually changed
+    if (treeString !== prevTreeRef.current) {
+      prevTreeRef.current = treeString;
+      
+      if (unilevelTree) {
+        // Add level indicators to node names
+        const addLevelIndicators = (node: any, level: number = 0): any => {
+          const levelPrefix = level > 0 ? `L${level}: ` : "";
+          return {
+            ...node,
+            name: levelPrefix + node.name,
+            attributes: {
+              ...node.attributes,
+              Level: level,
+            },
+            children: node.children?.map((child: any) => addLevelIndicators(child, level + 1)),
+          };
         };
-      };
 
-      const data = buildTree(userId);
-      setTreeData(data ? [data] : null);
+        const treeWithLevels = addLevelIndicators(unilevelTree);
+        setTreeData([treeWithLevels]);
+      } else {
+        setTreeData(null);
+      }
     }
-  }, [allUsers, userId]);
+  }, [unilevelTree]);
 
   return (
     <div className="space-y-6">
@@ -991,7 +1148,7 @@ function NetworkView({ allUsers, userId }: any) {
           onClick={() => setActiveTab("tree")}
           className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "tree" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`}
         >
-          Binary Tree
+          Unilevel Network
         </button>
         <button
           onClick={() => setActiveTab("direct")}
@@ -1008,21 +1165,45 @@ function NetworkView({ allUsers, userId }: any) {
       </div>
 
       {activeTab === "tree" && (
-        <div className="h-[600px] bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 relative overflow-hidden">
-          {treeData ? (
-            <Tree
-              data={treeData}
-              orientation="vertical"
-              pathFunc="step"
-              translate={{ x: 400, y: 50 }}
-              nodeSize={{ x: 200, y: 200 }}
-              renderCustomNodeElement={(rd3tProps) => <CustomNode {...rd3tProps} />}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500">
-              Loading Tree...
-            </div>
-          )}
+        <div className="space-y-4">
+          {/* Level Depth Selector */}
+          <div className="flex items-center gap-4 p-4 bg-slate-900/50 backdrop-blur-sm rounded-xl border border-slate-800">
+            <label className="text-sm font-medium text-slate-300">Tree Depth:</label>
+            <select
+              value={maxLevels}
+              onChange={(e) => setMaxLevels(Number(e.target.value))}
+              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value={3}>3 Levels</option>
+              <option value={5}>5 Levels</option>
+              <option value={10}>10 Levels (Full)</option>
+            </select>
+            <span className="text-xs text-slate-500 ml-auto">
+              Showing {maxLevels} levels of your Unilevel network
+            </span>
+          </div>
+
+          <div className="h-[600px] bg-slate-900/50 backdrop-blur-sm rounded-2xl border border-slate-800 relative overflow-auto">
+            {treeData ? (
+              <div style={{ width: "100%", height: "100%", minWidth: "800px" }}>
+                <Tree
+                  data={treeData}
+                  orientation="vertical"
+                  pathFunc="step"
+                  translate={{ x: 500, y: 50 }}
+                  nodeSize={{ x: 300, y: 120 }}
+                  separation={{ siblings: 1.2, nonSiblings: 1.5 }}
+                  renderCustomNodeElement={(rd3tProps) => <CustomNode {...rd3tProps} />}
+                  zoomable={true}
+                  draggable={true}
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-500">
+                {unilevelTree === undefined ? "Loading Unilevel Network..." : "No network data available"}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1042,19 +1223,23 @@ function NetworkView({ allUsers, userId }: any) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {directReferrals?.map((user: any) => (
-                  <tr key={user._id} className="hover:bg-slate-800/30">
-                    <td className="p-4 font-medium text-white">{user.name}</td>
-                    <td className="p-4 text-slate-400">{user.email}</td>
-                    <td className="p-4">
-                      <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold">
-                        {user.currentRank}
-                      </span>
-                    </td>
-                    <td className="p-4 text-slate-500">{new Date(user.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-                {(!directReferrals || directReferrals.length === 0) && (
+                {Array.isArray(directReferrals) && directReferrals.length > 0 ? (
+                  directReferrals.map((user: any) => {
+                    const safeCreatedAt = user.createdAt ?? Date.now();
+                    return (
+                      <tr key={user._id} className="hover:bg-slate-800/30">
+                        <td className="p-4 font-medium text-white">{user.name || "N/A"}</td>
+                        <td className="p-4 text-slate-400">{user.email || "N/A"}</td>
+                        <td className="p-4">
+                          <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold">
+                            {user.currentRank || "N/A"}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-500">{new Date(safeCreatedAt).toLocaleDateString()}</td>
+                      </tr>
+                    );
+                  })
+                ) : (
                   <tr><td colSpan={4} className="p-8 text-center text-slate-500">No direct referrals yet.</td></tr>
                 )}
               </tbody>
@@ -1079,19 +1264,23 @@ function NetworkView({ allUsers, userId }: any) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {indirectReferrals?.map((user: any) => (
-                  <tr key={user._id} className="hover:bg-slate-800/30">
-                    <td className="p-4 font-medium text-white">{user.name}</td>
-                    <td className="p-4 text-slate-300">{user.referredBy}</td>
-                    <td className="p-4">
-                      <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold">
-                        {user.currentRank}
-                      </span>
-                    </td>
-                    <td className="p-4 text-slate-500">{new Date(user.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-                {(!indirectReferrals || indirectReferrals.length === 0) && (
+                {Array.isArray(indirectReferrals) && indirectReferrals.length > 0 ? (
+                  indirectReferrals.map((user: any) => {
+                    const safeCreatedAt = user.createdAt ?? Date.now();
+                    return (
+                      <tr key={user._id} className="hover:bg-slate-800/30">
+                        <td className="p-4 font-medium text-white">{user.name || "N/A"}</td>
+                        <td className="p-4 text-slate-300">{user.referredBy || "N/A"}</td>
+                        <td className="p-4">
+                          <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold">
+                            {user.currentRank || "N/A"}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-500">{new Date(safeCreatedAt).toLocaleDateString()}</td>
+                      </tr>
+                    );
+                  })
+                ) : (
                   <tr><td colSpan={4} className="p-8 text-center text-slate-500">No indirect referrals yet.</td></tr>
                 )}
               </tbody>
@@ -1141,17 +1330,20 @@ function EarningsView({ userEarnings, blsConfig, pauseStates }: any) {
       </div>
       <div className="space-y-2 mt-4">
         <div className="text-xs text-slate-500 font-medium uppercase">Recent</div>
-        {recentTransactions && recentTransactions.length > 0 ? (
-          recentTransactions.map((tx: any) => (
-            <div key={tx._id} className="flex justify-between items-center text-sm p-2 bg-slate-800/30 rounded-lg">
-              <span className="text-slate-400 text-xs truncate max-w-[200px]">
-                {tx.description}
-              </span>
-              <span className={`font-bold text-${color}-400`}>
-                +{formatAmount(tx.amount)}
-              </span>
-            </div>
-          ))
+        {Array.isArray(recentTransactions) && recentTransactions.length > 0 ? (
+          recentTransactions.map((tx: any) => {
+            const safeAmount = tx.amount ?? 0;
+            return (
+              <div key={tx._id} className="flex justify-between items-center text-sm p-2 bg-slate-800/30 rounded-lg">
+                <span className="text-slate-400 text-xs truncate max-w-[200px]">
+                  {tx.description || "Earning"}
+                </span>
+                <span className={`font-bold text-${color}-400`}>
+                  +{formatAmount(safeAmount)}
+                </span>
+              </div>
+            );
+          })
         ) : (
           <div className="text-xs text-slate-600 italic">No earnings yet</div>
         )}
@@ -1276,7 +1468,37 @@ function SettingsView({ userProfile, toast }: any) {
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const updatePassword = useMutation(api.users.updatePassword);
+  const [show2FASetup, setShow2FASetup] = useState(false);
+  const updatePassword = useCachedMutation(api.users.updatePassword);
+  
+  // Fetch 2FA requirement and status
+  // Use getSystemPauseStates as primary source (it includes twoFactorRequired)
+  const pauseStatesFor2FA = useCachedQuery(api.configs.getSystemPauseStates);
+  // Try to get detailed 2FA requirement (for enabledAt timestamp), but don't break if it's not available
+  const twoFactorRequirement = useCachedQuery(api.configs.get2FARequirement, "skip"); // Skip for now to avoid errors
+  const is2FARequired = pauseStatesFor2FA?.twoFactorRequired ?? twoFactorRequirement?.isRequired ?? false;
+  const is2FAEnabled = userProfile?.twoFactorEnabled ?? false;
+  const twoFactorSetupAt = userProfile?.twoFactorSetupAt;
+  
+  // Calculate grace period info
+  const gracePeriodInfo = useMemo(() => {
+    if (!is2FARequired || is2FAEnabled || !userProfile) return null;
+    
+    const requirementEnabledAt = twoFactorRequirement?.enabledAt;
+    if (!requirementEnabledAt) return null;
+    
+    const userCreatedAt = userProfile.createdAt;
+    const userRequiredAt = userProfile.twoFactorRequiredAt || userCreatedAt;
+    const gracePeriodEnd = userRequiredAt + (30 * 24 * 60 * 60 * 1000); // 30 days
+    const now = Date.now();
+    const daysRemaining = Math.ceil((gracePeriodEnd - now) / (24 * 60 * 60 * 1000));
+    
+    if (now >= gracePeriodEnd) {
+      return { expired: true, daysRemaining: 0 };
+    }
+    
+    return { expired: false, daysRemaining };
+  }, [is2FARequired, is2FAEnabled, userProfile, twoFactorRequirement]);
 
   const handleUpdatePassword = async () => {
     if (!userProfile?._id) return;
@@ -1346,15 +1568,77 @@ function SettingsView({ userProfile, toast }: any) {
           <h2 className="text-xl font-bold">Security</h2>
         </div>
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 bg-theme-tertiary/50 dark:bg-slate-800/50 light:bg-gray-100 rounded-xl border border-theme-secondary dark:border-slate-700 light:border-gray-300">
-            <div>
-              <div className="font-bold mb-1 text-theme-primary">Two-Factor Authentication</div>
-              <div className="text-xs text-theme-secondary">Add an extra layer of security to your account.</div>
+          {/* 2FA Status */}
+          <div className="p-4 bg-theme-tertiary/50 dark:bg-slate-800/50 light:bg-gray-100 rounded-xl border border-theme-secondary dark:border-slate-700 light:border-gray-300">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="w-5 h-5 text-emerald-400" />
+                  <div className="font-bold text-theme-primary">Two-Factor Authentication</div>
+                  {is2FAEnabled && (
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-full">
+                      Enabled
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-theme-secondary mb-2">
+                  {is2FAEnabled 
+                    ? `Enabled on ${twoFactorSetupAt ? new Date(twoFactorSetupAt).toLocaleDateString() : 'N/A'}`
+                    : "Add an extra layer of security to your account."
+                  }
+                </div>
+                {!is2FAEnabled && is2FARequired && gracePeriodInfo && (
+                  <div className={`text-xs p-2 rounded-lg ${
+                    gracePeriodInfo.expired 
+                      ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
+                      : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
+                  }`}>
+                    {gracePeriodInfo.expired 
+                      ? "⚠️ 2FA setup is required. Please set it up now to continue using the platform."
+                      : `⏰ You have ${gracePeriodInfo.daysRemaining} days remaining to set up 2FA.`
+                    }
+                  </div>
+                )}
+              </div>
+              {!is2FAEnabled && (
+                <button 
+                  onClick={() => setShow2FASetup(true)}
+                  className="w-full sm:w-auto px-4 py-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg text-sm font-bold transition-all"
+                >
+                  {is2FARequired ? "Set Up 2FA" : "Enable 2FA"}
+                </button>
+              )}
             </div>
-            <button className="w-full sm:w-auto px-4 py-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg text-sm font-bold transition-all">
-              Enable 2FA
-            </button>
           </div>
+
+          {/* 2FA Setup Modal */}
+          {show2FASetup && userProfile?._id && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className="relative bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-white">Set Up 2FA</h3>
+                  <button
+                    onClick={() => setShow2FASetup(false)}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <TwoFactorSetup
+                    userId={userProfile._id}
+                    onComplete={() => {
+                      setShow2FASetup(false);
+                      toast.success("2FA enabled successfully!");
+                      // Refresh user profile
+                      window.location.reload();
+                    }}
+                    onCancel={() => setShow2FASetup(false)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="p-4 bg-theme-tertiary/50 dark:bg-slate-800/50 light:bg-gray-100 rounded-xl border border-theme-secondary dark:border-slate-700 light:border-gray-300">
             <div className="font-bold mb-4 flex items-center gap-2 text-theme-primary">
@@ -1395,14 +1679,70 @@ function SettingsView({ userProfile, toast }: any) {
   )
 }
 
-const CustomNode = ({ nodeDatum, toggleNode }: any) => (
-  <g>
-    <circle r="30" fill="#1e293b" stroke="#8b5cf6" strokeWidth="2" onClick={toggleNode} />
-    <text fill="white" x="40" y="-10" strokeWidth="0" fontSize="14" fontWeight="bold">
-      {nodeDatum.name}
-    </text>
-    <text fill="#94a3b8" x="40" y="10" strokeWidth="0" fontSize="12">
-      {nodeDatum.attributes?.Rank} • {nodeDatum.attributes?.Volume}
-    </text>
-  </g>
-);
+const CustomNode = ({ nodeDatum, toggleNode }: any) => {
+  const level = nodeDatum.attributes?.Level || 0;
+  const directs = nodeDatum.attributes?.Directs || 0;
+  const unlocked = nodeDatum.attributes?.Unlocked || "0/10";
+  
+  // Color coding by level
+  const getLevelColor = (level: number) => {
+    const colors = [
+      "#8b5cf6", // L0 - Purple
+      "#6366f1", // L1 - Indigo
+      "#3b82f6", // L2 - Blue
+      "#10b981", // L3 - Green
+      "#f59e0b", // L4 - Amber
+      "#ef4444", // L5 - Red
+      "#ec4899", // L6 - Pink
+      "#8b5cf6", // L7 - Purple
+      "#6366f1", // L8 - Indigo
+      "#3b82f6", // L9 - Blue
+      "#10b981", // L10 - Green
+    ];
+    return colors[Math.min(level, colors.length - 1)];
+  };
+
+  const nodeColor = getLevelColor(level);
+  
+  return (
+    <g>
+      <circle 
+        r="35" 
+        fill="#1e293b" 
+        stroke={nodeColor} 
+        strokeWidth="2.5" 
+        onClick={toggleNode}
+        style={{ cursor: "pointer" }}
+      />
+      <text 
+        fill="white" 
+        x="45" 
+        y="-15" 
+        strokeWidth="0" 
+        fontSize="13" 
+        fontWeight="bold"
+      >
+        {nodeDatum.name}
+      </text>
+      <text 
+        fill="#94a3b8" 
+        x="45" 
+        y="0" 
+        strokeWidth="0" 
+        fontSize="11"
+      >
+        {nodeDatum.attributes?.Rank} • {nodeDatum.attributes?.Volume}
+      </text>
+      <text 
+        fill={nodeColor} 
+        x="45" 
+        y="15" 
+        strokeWidth="0" 
+        fontSize="10"
+        fontWeight="600"
+      >
+        Directs: {directs} • Unlocked: {unlocked}
+      </text>
+    </g>
+  );
+};

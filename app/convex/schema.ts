@@ -39,6 +39,7 @@ export default defineSchema({
     twoFactorSecret: v.optional(v.string()),  // TOTP secret for 2FA (encrypted)
     twoFactorBackupCodes: v.optional(v.array(v.string())),  // Hashed backup codes
     twoFactorSetupAt: v.optional(v.number()),  // When 2FA was enabled
+    twoFactorRequiredAt: v.optional(v.number()),  // When user was required to set up 2FA (for grace period tracking)
 
     // Unilevel Commission Tracking
     activeDirectReferrals: v.optional(v.number()),      // Count of directs with active stakes

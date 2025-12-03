@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
 import { api } from "../convex/_generated/api";
-import { X, ArrowUpRight, Wallet, AlertTriangle } from "lucide-react";
+import { X, ArrowUpRight, Wallet, AlertTriangle, Shield } from "lucide-react";
 
 interface WithdrawModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onConfirm: (amount: number, address: string, network: string) => void;  // Added network parameter
+    onConfirm: (amount: number, address: string, network: string, twoFactorCode?: string) => void;  // Added 2FA code parameter
     walletBalance: number;
     userId?: string;
     onNavigateToSettings?: () => void;
@@ -18,24 +18,25 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const [amount, setAmount] = useState("");
     const [selectedAddress, setSelectedAddress] = useState("");
     const [network, setNetwork] = useState("polygon");  // NEW: Network selection
+    const [twoFactorCode, setTwoFactorCode] = useState("");
 
     // Fetch min withdrawal amount from config
-    const minWithdrawalConfig = useQuery(api.configs.getMinWithdrawalAmount);
+    const minWithdrawalConfig = useCachedQuery(api.configs.getMinWithdrawalAmount);
     const MIN_WITHDRAW_AMOUNT = minWithdrawalConfig ?? 50;
 
     // Fetch fee percentage
-    const feePercentageConfig = useQuery(api.configs.getWithdrawalFeePercentage);
+    const feePercentageConfig = useCachedQuery(api.configs.getWithdrawalFeePercentage);
     const feePercentage = feePercentageConfig ?? 0;
 
     // Fetch saved addresses
-    const savedAddresses = useQuery(api.addressBook.getAddresses, userId ? { userId: userId as any } : "skip");
+    const savedAddresses = useCachedQuery(api.addressBook.getAddresses, userId ? { userId: userId as any } : "skip");
 
     // Fetch BLS config to check if BLS system is enabled
-    const blsConfig = useQuery(api.bls.getBLSConfig);
+    const blsConfig = useCachedQuery(api.bls.getBLSConfig);
     const isBLSEnabled = blsConfig?.isEnabled || false;
 
     // Fetch swapped USDT balance (for withdrawals when BLS enabled)
-    const swappedUSDTBalance = useQuery(
+    const swappedUSDTBalance = useCachedQuery(
         api.wallet.getSwappedUSDTBalance,
         userId ? { userId: userId as any } : "skip"
     );
@@ -43,8 +44,20 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
         ? (swappedUSDTBalance?.swappedUSDTBalance || 0)
         : walletBalance;
 
-    // Filter for unlocked addresses
-    const activeAddresses = savedAddresses?.filter((addr: any) => addr.isReady) || [];
+    // Fetch 2FA requirement and user 2FA status
+    // Use getSystemPauseStates as primary source (it includes twoFactorRequired)
+    const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
+    // Try to get detailed 2FA requirement (for enabledAt timestamp), but don't break if it's not available
+    const twoFactorRequirement = useCachedQuery(api.configs.get2FARequirement, "skip"); // Skip for now to avoid errors
+    const userProfile = useCachedQuery(api.users.getProfile, userId ? { userId: userId as any } : "skip");
+    // Use pauseStates.twoFactorRequired as primary source, fallback to twoFactorRequirement if available
+    const is2FARequired = pauseStates?.twoFactorRequired ?? twoFactorRequirement?.isRequired ?? false;
+    const requires2FA = is2FARequired && userProfile?.twoFactorEnabled;
+
+    // Filter for unlocked addresses - ensure savedAddresses is an array
+    const activeAddresses = Array.isArray(savedAddresses) 
+        ? savedAddresses.filter((addr: any) => addr.isReady) 
+        : [];
 
     // Reset selection when modal opens or addresses load
     useEffect(() => {
@@ -59,8 +72,11 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
         e.preventDefault();
         const parsedAmount = parseFloat(amount);
         if (parsedAmount >= MIN_WITHDRAW_AMOUNT && parsedAmount <= availableWithdrawalBalance && selectedAddress) {
-            onConfirm(parsedAmount, selectedAddress, network);  // Pass network
+            // If 2FA is required, include the code
+            const code = requires2FA ? twoFactorCode : undefined;
+            onConfirm(parsedAmount, selectedAddress, network, code);  // Pass network and 2FA code
             setAmount("");
+            setTwoFactorCode("");
             onClose();
         }
     };
@@ -70,7 +86,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
     const netAmount = parsedAmount - fee;
     const isBelowMinimum = parsedAmount > 0 && parsedAmount < MIN_WITHDRAW_AMOUNT;
     const isOverBalance = parsedAmount > availableWithdrawalBalance;
-    const noActiveAddresses = !savedAddresses || activeAddresses.length === 0;
+    const noActiveAddresses = !Array.isArray(savedAddresses) || activeAddresses.length === 0;
     const noSwappedUSDT = isBLSEnabled && availableWithdrawalBalance === 0;
 
     return (
@@ -169,7 +185,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
                                     required
                                 >
                                     <option value="polygon">Polygon (USDT)</option>
-                                    <option value="bsc">BSC (USDT)</option>
+                                    <option value="bsc">BNB-BSC(BEP20) (USDT)</option>
                                     <option value="arbitrum">Arbitrum (USDT)</option>
                                 </select>
                                 <p className="text-xs text-slate-500 mt-2">
@@ -247,6 +263,35 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
                                     </div>
                                 </div>
                             )}
+
+                            {/* 2FA Input */}
+                            {requires2FA && (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Shield className="w-5 h-5 text-indigo-400" />
+                                        <label className="block text-sm font-medium text-slate-400">
+                                            2FA Code Required
+                                        </label>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        pattern="[0-9]*"
+                                        maxLength={6}
+                                        value={twoFactorCode}
+                                        onChange={(e) => {
+                                            const value = e.target.value.replace(/\D/g, "");
+                                            setTwoFactorCode(value);
+                                        }}
+                                        className="w-full p-3 bg-slate-800 rounded-xl border border-slate-700 focus:border-indigo-500 outline-none text-center text-2xl tracking-widest font-mono text-white transition-all"
+                                        placeholder="000000"
+                                        required={requires2FA}
+                                    />
+                                    <p className="text-xs text-slate-500">
+                                        Enter the 6-digit code from your authenticator app
+                                    </p>
+                                </div>
+                            )}
                         </>
                     )}
 
@@ -261,7 +306,7 @@ export function WithdrawModal({ isOpen, onClose, onConfirm, walletBalance, userI
                         </button>
                         <button
                             type="submit"
-                            disabled={isOverBalance || isBelowMinimum || noActiveAddresses || parsedAmount <= 0 || !selectedAddress}
+                            disabled={isOverBalance || isBelowMinimum || noActiveAddresses || parsedAmount <= 0 || !selectedAddress || (requires2FA && twoFactorCode.length !== 6)}
                             className="flex-1 py-3 px-4 bg-purple-600 hover:bg-purple-700 rounded-xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Request Withdrawal

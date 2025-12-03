@@ -4,6 +4,7 @@ import { Id } from "./_generated/dataModel";
 import { createError, ErrorCodes, isValidEmail } from "./errors";
 import bcrypt from "bcryptjs";
 import { notify } from "./notifications";
+import { check2FARequirement } from "./security/twoFactor";
 
 // Force rebuild
 export const register = mutation({
@@ -251,7 +252,95 @@ export const login = mutation({
             }
         }
 
-        // 5. Successful login - Reset attempts and update login info
+        // 5. Check 2FA requirement
+        const twoFactorRequiredConfig = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_required"))
+            .first();
+
+        const twoFactorEnabledAtConfig = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_enabled_at"))
+            .first();
+
+        const globalRequirement = twoFactorRequiredConfig?.value ?? false;
+        const requirementEnabledAt = twoFactorEnabledAtConfig?.value ?? null;
+
+        if (globalRequirement) {
+            const requirementCheck = check2FARequirement(
+                {
+                    createdAt: user.createdAt,
+                    twoFactorEnabled: user.twoFactorEnabled ?? false,
+                    twoFactorRequiredAt: user.twoFactorRequiredAt,
+                },
+                globalRequirement,
+                requirementEnabledAt
+            );
+
+            // If user has 2FA enabled, require code
+            if (user.twoFactorEnabled) {
+                // Mark that they need to provide 2FA code
+                // Don't update lastLoginAt yet - wait for 2FA verification
+                return {
+                    requires2FA: true,
+                    userId: user._id,
+                    gracePeriodInfo: null,
+                };
+            }
+
+            // If user must set up 2FA now (grace period expired)
+            if (requirementCheck.mustSetupNow) {
+                // Mark user as required to set up 2FA if not already marked
+                if (!user.twoFactorRequiredAt) {
+                    await ctx.db.patch(user._id, {
+                        twoFactorRequiredAt: Date.now(),
+                    });
+                }
+
+                throw createError(
+                    ErrorCodes.TWO_FACTOR_SETUP_REQUIRED,
+                    `Two-factor authentication is required. Please set it up in Settings. ${requirementCheck.daysRemaining ? `You have ${requirementCheck.daysRemaining} days remaining.` : ''}`
+                );
+            }
+
+            // If within grace period, allow login but mark as required
+            if (requirementCheck.isWithinGracePeriod) {
+                // Mark user as required if not already marked
+                if (!user.twoFactorRequiredAt) {
+                    await ctx.db.patch(user._id, {
+                        twoFactorRequiredAt: Date.now(),
+                    });
+                }
+
+                // Allow login but return warning
+                await ctx.db.patch(user._id, {
+                    loginAttempts: 0,
+                    lockedUntil: undefined,
+                    lastLoginAt: Date.now(),
+                    lastLoginIp: args.ipAddress,
+                });
+
+                await ctx.db.insert("security_audit_log", {
+                    userId: user._id,
+                    action: "login",
+                    status: "success",
+                    ipAddress: args.ipAddress,
+                    userAgent: args.userAgent,
+                    timestamp: Date.now(),
+                });
+
+                return {
+                    requires2FA: false,
+                    userId: user._id,
+                    gracePeriodInfo: {
+                        daysRemaining: requirementCheck.daysRemaining ?? 0,
+                        isFirstLogin: requirementCheck.isFirstLogin ?? false,
+                    },
+                };
+            }
+        }
+
+        // 6. Successful login - Reset attempts and update login info
         await ctx.db.patch(user._id, {
             loginAttempts: 0,
             lockedUntil: undefined,
@@ -259,7 +348,7 @@ export const login = mutation({
             lastLoginIp: args.ipAddress,
         });
 
-        // 6. Log successful login
+        // 7. Log successful login
         await ctx.db.insert("security_audit_log", {
             userId: user._id,
             action: "login",
@@ -346,6 +435,73 @@ export const getIndirectReferrals = query({
         }
 
         return indirectReferrals;
+    },
+});
+
+/**
+ * Get Unilevel tree structure for visualization
+ * Builds a tree from referrerId relationships up to 10 levels deep
+ */
+export const getUnilevelTree = query({
+    args: { 
+        userId: v.id("users"),
+        maxLevels: v.optional(v.number()) // Default to 10, but allow customization
+    },
+    handler: async (ctx, args) => {
+        const maxLevels = args.maxLevels ?? 10;
+        
+        async function buildTree(currentUserId: Id<"users">, currentLevel: number): Promise<any> {
+            const user = await ctx.db.get(currentUserId);
+            if (!user) return null;
+
+            // If we've reached max depth, return just the node without children
+            if (currentLevel >= maxLevels) {
+                return {
+                    name: user.name,
+                    attributes: {
+                        Rank: user.currentRank || "B0",
+                        Volume: `$${(user.teamVolume || 0).toFixed(2)}`,
+                        Directs: 0,
+                        Unlocked: `${user.unlockedLevels || 0}/10`,
+                        Level: currentLevel,
+                        Email: user.email || "",
+                    },
+                    children: undefined,
+                };
+            }
+
+            // Get all direct referrals (children in the tree)
+            const directReferrals = await ctx.db
+                .query("users")
+                .withIndex("by_referrerId", (q) => q.eq("referrerId", currentUserId))
+                .collect();
+
+            const children = [];
+            
+            // Recursively build tree for each direct referral
+            for (const referral of directReferrals) {
+                const childTree = await buildTree(referral._id, currentLevel + 1);
+                if (childTree) {
+                    children.push(childTree);
+                }
+            }
+
+            return {
+                name: user.name,
+                attributes: {
+                    Rank: user.currentRank || "B0",
+                    Volume: `$${(user.teamVolume || 0).toFixed(2)}`,
+                    Directs: directReferrals.length,
+                    Unlocked: `${user.unlockedLevels || 0}/10`,
+                    Level: currentLevel,
+                    Email: user.email || "",
+                },
+                children: children.length > 0 ? children : undefined,
+            };
+        }
+
+        const treeData = await buildTree(args.userId, 0);
+        return treeData;
     },
 });
 
@@ -581,6 +737,125 @@ export const addTestFunds = mutation({
             newBalance,
             message: `Added $${args.amount} to ${args.email}. New balance: $${newBalance}`,
         };
+    },
+});
+
+/**
+ * Store 2FA secret (helper mutation called by action)
+ */
+export const store2FASecret = mutation({
+    args: {
+        userId: v.id("users"),
+        secret: v.string(),
+    },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        if (!user) throw createError(ErrorCodes.USER_NOT_FOUND);
+
+        // Store secret temporarily (not enabled yet - will be enabled after verification)
+        await ctx.db.patch(args.userId, {
+            twoFactorSecret: args.secret,
+        });
+    },
+});
+
+/**
+ * Enable 2FA for user (helper mutation called by action after verification)
+ */
+export const enable2FA = mutation({
+    args: {
+        userId: v.id("users"),
+    },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        if (!user) throw createError(ErrorCodes.USER_NOT_FOUND);
+
+        if (!user.twoFactorSecret) {
+            throw createError(ErrorCodes.TWO_FACTOR_NOT_SETUP, "2FA secret not found");
+        }
+
+        // Enable 2FA for user
+        await ctx.db.patch(args.userId, {
+            twoFactorEnabled: true,
+            twoFactorSetupAt: Date.now(),
+        });
+
+        return { success: true };
+    },
+});
+
+/**
+ * Get user 2FA secret (helper query for actions)
+ */
+export const get2FASecret = query({
+    args: {
+        userId: v.id("users"),
+    },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        if (!user) throw createError(ErrorCodes.USER_NOT_FOUND);
+        return {
+            twoFactorEnabled: user.twoFactorEnabled ?? false,
+            twoFactorSecret: user.twoFactorSecret ?? null,
+        };
+    },
+});
+
+/**
+ * Complete login after 2FA verification (helper mutation called by action)
+ */
+export const completeLoginAfter2FA = mutation({
+    args: {
+        userId: v.id("users"),
+        ipAddress: v.optional(v.string()),
+        userAgent: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        const user = await ctx.db.get(args.userId);
+        if (!user) throw createError(ErrorCodes.USER_NOT_FOUND);
+
+        // Complete login - update login info
+        await ctx.db.patch(user._id, {
+            loginAttempts: 0,
+            lockedUntil: undefined,
+            lastLoginAt: Date.now(),
+            lastLoginIp: args.ipAddress,
+        });
+
+        // Log successful login with 2FA
+        await ctx.db.insert("security_audit_log", {
+            userId: user._id,
+            action: "login_2fa",
+            status: "success",
+            ipAddress: args.ipAddress,
+            userAgent: args.userAgent,
+            timestamp: Date.now(),
+        });
+
+        return { success: true, userId: user._id };
+    },
+});
+
+/**
+ * Log failed 2FA attempt (helper mutation called by action)
+ */
+export const logFailed2FA = mutation({
+    args: {
+        userId: v.id("users"),
+        ipAddress: v.optional(v.string()),
+        userAgent: v.optional(v.string()),
+        reason: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.insert("security_audit_log", {
+            userId: args.userId,
+            action: "login_2fa",
+            status: "failed",
+            ipAddress: args.ipAddress,
+            userAgent: args.userAgent,
+            metadata: { reason: args.reason || "Invalid 2FA code" },
+            timestamp: Date.now(),
+        });
     },
 });
 

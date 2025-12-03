@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Bell, X, Check } from "lucide-react";
-import { useQuery, useMutation } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 
@@ -14,10 +15,10 @@ export function NotificationBell({ userId }: NotificationBellProps) {
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    const notifications = useQuery(api.notifications.getUserNotifications, { userId, limit: 5 });
-    const unreadCount = useQuery(api.notifications.getUnreadCount, { userId });
-    const markAsRead = useMutation(api.notifications.markAsRead);
-    const markAllAsRead = useMutation(api.notifications.markAllAsRead);
+    const notifications = useCachedQuery(api.notifications.getUserNotifications, { userId, limit: 5 });
+    const unreadCount = useCachedQuery(api.notifications.getUnreadCount, { userId });
+    const markAsRead = useCachedMutation(api.notifications.markAsRead);
+    const markAllAsRead = useCachedMutation(api.notifications.markAllAsRead);
 
     // Close dropdown when clicking outside
     useEffect(() => {

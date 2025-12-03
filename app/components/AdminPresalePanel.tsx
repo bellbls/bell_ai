@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import {
     Shield, Users, DollarSign, Activity,
@@ -21,13 +22,13 @@ import {
 
 export function AdminPresalePanel() {
     const toast = useToast();
-    const stats = useQuery(api.admin.getPresaleStats);
+    const stats = useCachedQuery(api.admin.getPresaleStats);
 
-    const togglePresale = useMutation(api.admin.togglePresale);
-    const openStaking = useMutation(api.admin.openStaking);
-    const convertAllOrders = useMutation(api.admin.convertAllOrders);
-    const initialize = useMutation(api.presale.initializeConfig);
-    const updatePresaleConfig = useMutation(api.presale.updatePresaleConfig);
+    const togglePresale = useCachedMutation(api.admin.togglePresale);
+    const openStaking = useCachedMutation(api.admin.openStaking);
+    const convertAllOrders = useCachedMutation(api.admin.convertAllOrders);
+    const initialize = useCachedMutation(api.presale.initializeConfig);
+    const updatePresaleConfig = useCachedMutation(api.presale.updatePresaleConfig);
 
     const [isToggling, setIsToggling] = useState(false);
     const [isOpeningStaking, setIsOpeningStaking] = useState(false);

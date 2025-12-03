@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import { Edit, X, Check } from "lucide-react";
@@ -48,14 +49,14 @@ export default function NetworkStatusDashboard({ userId, isAdmin }: NetworkStatu
     const [saving, setSaving] = useState(false);
 
     // Queries with explicit return types inferred from Convex
-    const networks = useQuery(api.networkManagement.getAllNetworks, {});
-    const balances = useQuery(api.networkManagement.getNetworkBalances, {});
-    const unreadAlertsCount = useQuery(api.adminAlerts.getUnreadAlertsCount, {});
+    const networks = useCachedQuery(api.networkManagement.getAllNetworks, {});
+    const balances = useCachedQuery(api.networkManagement.getNetworkBalances, {});
+    const unreadAlertsCount = useCachedQuery(api.adminAlerts.getUnreadAlertsCount, {});
 
     // Mutations
-    const pauseNetwork = useMutation(api.networkManagement.pauseNetwork);
-    const resumeNetwork = useMutation(api.networkManagement.resumeNetwork);
-    const updateNetwork = useMutation(api.networkManagement.updateNetwork);
+    const pauseNetwork = useCachedMutation(api.networkManagement.pauseNetwork);
+    const resumeNetwork = useCachedMutation(api.networkManagement.resumeNetwork);
+    const updateNetwork = useCachedMutation(api.networkManagement.updateNetwork);
 
     if (!isAdmin) {
         return null;

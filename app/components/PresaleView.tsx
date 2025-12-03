@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 import {
@@ -11,12 +12,12 @@ import { useToast } from "../hooks/useToast";
 
 export function PresaleView({ userId }: { userId: Id<"users"> }) {
     const toast = useToast();
-    const config = useQuery(api.presale.getConfig);
-    const userOrders = useQuery(api.presale.getUserOrders, { userId });
-    const userProfile = useQuery(api.users.getProfile, { userId });
-    const pauseStates = useQuery(api.configs.getSystemPauseStates);
+    const config = useCachedQuery(api.presale.getConfig);
+    const userOrders = useCachedQuery(api.presale.getUserOrders, { userId });
+    const userProfile = useCachedQuery(api.users.getProfile, { userId });
+    const pauseStates = useCachedQuery(api.configs.getSystemPauseStates);
 
-    const purchaseNode = useMutation(api.presale.purchaseNode);
+    const purchaseNode = useCachedMutation(api.presale.purchaseNode);
 
     const [quantity, setQuantity] = useState(1);
     const [isPurchasing, setIsPurchasing] = useState(false);
@@ -45,14 +46,23 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
         );
     }
 
-    const soldPercentage = Math.min(100, (config.soldNodes / config.totalNodes) * 100);
-    const totalCost = quantity * config.pricePerNode;
+    // Ensure safe defaults for config values
+    const safeTotalNodes = config.totalNodes ?? 0;
+    const safeSoldNodes = config.soldNodes ?? 0;
+    const safePricePerNode = config.pricePerNode ?? 0;
+    
+    const soldPercentage = safeTotalNodes > 0 ? Math.min(100, (safeSoldNodes / safeTotalNodes) * 100) : 0;
+    const totalCost = quantity * safePricePerNode;
     const canAfford = (userProfile?.walletBalance || 0) >= totalCost;
-    const remainingNodes = config.totalNodes - config.soldNodes;
+    const remainingNodes = safeTotalNodes - safeSoldNodes;
 
-    // Calculate user stats
-    const userTotalNodes = userOrders?.reduce((sum, o) => sum + o.quantity, 0) || 0;
-    const userTotalInvested = userOrders?.reduce((sum, o) => sum + o.totalAmount, 0) || 0;
+    // Calculate user stats - ensure userOrders is an array
+    const userTotalNodes = Array.isArray(userOrders) 
+        ? userOrders.reduce((sum, o) => sum + (o.quantity ?? 0), 0) 
+        : 0;
+    const userTotalInvested = Array.isArray(userOrders)
+        ? userOrders.reduce((sum, o) => sum + (o.totalAmount ?? 0), 0)
+        : 0;
 
     const handlePurchase = async () => {
         if (!canAfford) {
@@ -111,7 +121,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="bg-white/5 backdrop-blur-sm rounded-xl p-4 border border-white/10">
                                 <p className="text-sm text-indigo-200/80 mb-1">Total Supply</p>
-                                <p className="text-2xl font-bold text-white">{config.totalNodes.toLocaleString()}</p>
+                                <p className="text-2xl font-bold text-white">{safeTotalNodes.toLocaleString()}</p>
                                 <p className="text-xs text-indigo-300/70 mt-1">Nodes Available</p>
                             </div>
                             <div className="bg-white/5 backdrop-blur-sm rounded-xl p-4 border border-white/10">
@@ -234,7 +244,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                         <div className="flex justify-between items-end mb-4">
                             <div>
                                 <h3 className="text-xl font-bold text-white mb-1">Presale Progress</h3>
-                                <p className="text-slate-400 text-sm">Join {config.soldNodes} other early adopters</p>
+                                <p className="text-slate-400 text-sm">Join {safeSoldNodes} other early adopters</p>
                             </div>
                             <div className="text-right">
                                 <span className="text-3xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
@@ -251,7 +261,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                             </div>
                         </div>
                         <div className="flex justify-between text-xs text-slate-500 mt-2">
-                            <span>{config.soldNodes.toLocaleString()} sold</span>
+                            <span>{safeSoldNodes.toLocaleString()} sold</span>
                             <span>{remainingNodes.toLocaleString()} remaining</span>
                         </div>
                     </div>
@@ -299,7 +309,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                                 <div className="bg-slate-800/50 rounded-xl p-5 space-y-4 border border-slate-700/50">
                                     <div className="flex justify-between items-center">
                                         <span className="text-slate-400 text-sm">Price per Node</span>
-                                        <span className="text-white font-semibold">${config.pricePerNode} USDT</span>
+                                        <span className="text-white font-semibold">${safePricePerNode} USDT</span>
                                     </div>
                                     <div className="flex justify-between items-center">
                                         <span className="text-slate-400 text-sm">Quantity</span>
@@ -399,25 +409,29 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
 
                             <div className="space-y-3">
                                 <h4 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Recent Orders</h4>
-                                {userOrders && userOrders.length > 0 ? (
+                                {Array.isArray(userOrders) && userOrders.length > 0 ? (
                                     <div className="space-y-3">
-                                        {userOrders.slice(0, 5).map((order) => (
-                                            <div key={order._id} className="bg-slate-800/30 p-3 rounded-lg flex justify-between items-center">
-                                                <div>
-                                                    <p className="text-white font-medium">{order.quantity} Node{order.quantity > 1 ? 's' : ''}</p>
-                                                    <p className="text-xs text-slate-500">{new Date(order.purchaseDate).toLocaleDateString()}</p>
+                                        {userOrders.slice(0, 5).map((order) => {
+                                            const safePurchaseDate = order.purchaseDate ?? Date.now();
+                                            const safeTotalAmount = order.totalAmount ?? 0;
+                                            return (
+                                                <div key={order._id} className="bg-slate-800/30 p-3 rounded-lg flex justify-between items-center">
+                                                    <div>
+                                                        <p className="text-white font-medium">{order.quantity ?? 0} Node{(order.quantity ?? 0) > 1 ? 's' : ''}</p>
+                                                        <p className="text-xs text-slate-500">{new Date(safePurchaseDate).toLocaleDateString()}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-indigo-400 font-medium">${safeTotalAmount}</p>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400' :
+                                                            order.status === 'converted' ? 'bg-blue-500/20 text-blue-400' :
+                                                                'bg-slate-700 text-slate-400'
+                                                            }`}>
+                                                            {order.status || 'pending'}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <p className="text-indigo-400 font-medium">${order.totalAmount}</p>
-                                                    <span className={`text-xs px-2 py-0.5 rounded-full ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400' :
-                                                        order.status === 'converted' ? 'bg-blue-500/20 text-blue-400' :
-                                                            'bg-slate-700 text-slate-400'
-                                                        }`}>
-                                                        {order.status}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 ) : (
                                     <div className="text-center py-8 text-slate-500 bg-slate-800/20 rounded-xl border border-slate-800 border-dashed">
@@ -468,7 +482,7 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                     </div>
                 </div>
                 <div className="p-6">
-                    {userOrders && userOrders.length > 0 ? (
+                    {Array.isArray(userOrders) && userOrders.length > 0 ? (
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
@@ -482,23 +496,27 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                                 </thead>
                                 <tbody className="divide-y divide-slate-700/30">
                                     {userOrders
-                                        .sort((a, b) => b.purchaseDate - a.purchaseDate)
-                                        .map((order) => (
-                                            <tr key={order._id} className="hover:bg-slate-800/30 transition-colors">
-                                                <td className="py-4 px-4 text-slate-300">
-                                                    {new Date(order.purchaseDate).toLocaleString()}
-                                                </td>
-                                                <td className="py-4 px-4">
-                                                    <span className="text-slate-400 font-mono text-sm">
-                                                        {order._id.substring(order._id.length - 8)}
-                                                    </span>
-                                                </td>
-                                                <td className="py-4 px-4 text-white font-medium">
-                                                    {order.quantity} {order.quantity === 1 ? 'Node' : 'Nodes'}
-                                                </td>
-                                                <td className="py-4 px-4 text-indigo-400 font-semibold">
-                                                    ${order.totalAmount.toFixed(2)} USDT
-                                                </td>
+                                        .sort((a, b) => (b.purchaseDate ?? 0) - (a.purchaseDate ?? 0))
+                                        .map((order) => {
+                                            const safePurchaseDate = order.purchaseDate ?? Date.now();
+                                            const safeTotalAmount = order.totalAmount ?? 0;
+                                            const safeQuantity = order.quantity ?? 0;
+                                            return (
+                                                <tr key={order._id} className="hover:bg-slate-800/30 transition-colors">
+                                                    <td className="py-4 px-4 text-slate-300">
+                                                        {new Date(safePurchaseDate).toLocaleString()}
+                                                    </td>
+                                                    <td className="py-4 px-4">
+                                                        <span className="text-slate-400 font-mono text-sm">
+                                                            {order._id ? order._id.substring(order._id.length - 8) : 'N/A'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-4 px-4 text-white font-medium">
+                                                        {safeQuantity} {safeQuantity === 1 ? 'Node' : 'Nodes'}
+                                                    </td>
+                                                    <td className="py-4 px-4 text-indigo-400 font-semibold">
+                                                        ${safeTotalAmount.toFixed(2)} USDT
+                                                    </td>
                                                 <td className="py-4 px-4">
                                                     <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
                                                         order.status === 'confirmed' 
@@ -512,11 +530,12 @@ export function PresaleView({ userId }: { userId: Id<"users"> }) {
                                                         {order.status === 'confirmed' && <Check className="w-3 h-3 mr-1" />}
                                                         {order.status === 'converted' && <Zap className="w-3 h-3 mr-1" />}
                                                         {order.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                                                        {(order.status || 'pending').charAt(0).toUpperCase() + (order.status || 'pending').slice(1)}
                                                     </span>
                                                 </td>
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                 </tbody>
                             </table>
                         </div>

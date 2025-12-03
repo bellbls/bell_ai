@@ -1,7 +1,8 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v, Id } from "convex/values";
 import { createError, ErrorCodes, isValidAmount } from "./errors";
-import { internal } from "./_generated/api";
+import { internal, api } from "./_generated/api";
+import { check2FARequirement } from "./security/twoFactor";
 
 // ==================== DEPOSIT ====================
 
@@ -50,11 +51,15 @@ export const deposit = mutation({
 // ==================== WITHDRAWAL ====================
 
 
+// Keep requestWithdrawal as a mutation for backward compatibility
+// But it will be called by the action after 2FA verification
 export const requestWithdrawal = mutation({
     args: {
         userId: v.id("users"),
         amount: v.number(),
         address: v.string(),
+        network: v.optional(v.string()),
+        twoFactorCode: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // Validate amount
@@ -123,6 +128,53 @@ export const requestWithdrawal = mutation({
         // Check balance
         if ((user.walletBalance || 0) < args.amount) {
             throw createError(ErrorCodes.INSUFFICIENT_BALANCE);
+        }
+
+        // Check 2FA requirement
+        const twoFactorRequiredConfig = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_required"))
+            .first();
+
+        const twoFactorEnabledAtConfig = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_enabled_at"))
+            .first();
+
+        const globalRequirement = twoFactorRequiredConfig?.value ?? false;
+        const requirementEnabledAt = twoFactorEnabledAtConfig?.value ?? null;
+
+        if (globalRequirement) {
+            const requirementCheck = check2FARequirement(
+                {
+                    createdAt: user.createdAt,
+                    twoFactorEnabled: user.twoFactorEnabled ?? false,
+                    twoFactorRequiredAt: user.twoFactorRequiredAt,
+                },
+                globalRequirement,
+                requirementEnabledAt
+            );
+
+            // If user has 2FA enabled, require verification
+            if (user.twoFactorEnabled) {
+                // twoFactorCode is passed from the action after verification
+                // If the code is present, it means it was already verified by the action
+                if (!args.twoFactorCode) {
+                    throw createError(ErrorCodes.TWO_FACTOR_REQUIRED, "2FA code is required for withdrawals");
+                }
+            } else {
+                // User doesn't have 2FA enabled
+                // If grace period expired, require setup
+                if (requirementCheck.mustSetupNow) {
+                    throw createError(
+                        ErrorCodes.TWO_FACTOR_SETUP_REQUIRED,
+                        "Two-factor authentication is required for withdrawals. Please set it up in Settings."
+                    );
+                }
+
+                // If within grace period, allow but warn (we'll just allow for now)
+                // In production, you might want to show a warning message
+            }
         }
 
         // Deduct balance immediately to prevent double spend

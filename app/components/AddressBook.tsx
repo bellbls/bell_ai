@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCachedQuery } from "../hooks/useCachedQuery";
+import { useCachedMutation } from "../hooks/useCachedMutation";
 import { api } from "../convex/_generated/api";
 import { Plus, Trash2, Clock, CheckCircle, AlertTriangle, Shield } from "lucide-react";
 
@@ -11,9 +12,9 @@ export function AddressBook({ userId, toast }: { userId: string; toast: any }) {
     const [newLabel, setNewLabel] = useState("");
     const [loading, setLoading] = useState(false);
 
-    const addresses = useQuery(api.addressBook.getAddresses, { userId: userId as any });
-    const addAddress = useMutation(api.addressBook.addAddress);
-    const deleteAddress = useMutation(api.addressBook.deleteAddress);
+    const addresses = useCachedQuery(api.addressBook.getAddresses, { userId: userId as any });
+    const addAddress = useCachedMutation(api.addressBook.addAddress);
+    const deleteAddress = useCachedMutation(api.addressBook.deleteAddress);
 
     const handleAdd = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -124,7 +125,7 @@ export function AddressBook({ userId, toast }: { userId: string; toast: any }) {
 
             {/* Address List */}
             <div className="space-y-3">
-                {!addresses || addresses.length === 0 ? (
+                {!Array.isArray(addresses) || addresses.length === 0 ? (
                     <div className="text-center p-8 text-slate-500 bg-slate-900/30 rounded-xl border border-slate-800 border-dashed">
                         No saved addresses found.
                     </div>

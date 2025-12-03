@@ -41,6 +41,12 @@ export const ErrorCodes = {
     VALIDATION_ERROR: 'VALIDATION_ERROR',
     UNAUTHORIZED: 'UNAUTHORIZED',
     INTERNAL_ERROR: 'INTERNAL_ERROR',
+
+    // 2FA errors
+    TWO_FACTOR_REQUIRED: 'TWO_FACTOR_REQUIRED',
+    TWO_FACTOR_INVALID_CODE: 'TWO_FACTOR_INVALID_CODE',
+    TWO_FACTOR_NOT_SETUP: 'TWO_FACTOR_NOT_SETUP',
+    TWO_FACTOR_SETUP_REQUIRED: 'TWO_FACTOR_SETUP_REQUIRED',
 };
 
 // User-friendly error messages
@@ -72,6 +78,11 @@ export const ErrorMessages: Record<string, string> = {
     [ErrorCodes.VALIDATION_ERROR]: 'Validation error. Please check your input.',
     [ErrorCodes.UNAUTHORIZED]: 'Unauthorized access.',
     [ErrorCodes.INTERNAL_ERROR]: 'An internal error occurred. Please try again later.',
+
+    [ErrorCodes.TWO_FACTOR_REQUIRED]: 'Two-factor authentication is required. Please enter your 2FA code.',
+    [ErrorCodes.TWO_FACTOR_INVALID_CODE]: 'Invalid 2FA code. Please try again.',
+    [ErrorCodes.TWO_FACTOR_NOT_SETUP]: 'Two-factor authentication is not set up. Please set it up in Settings.',
+    [ErrorCodes.TWO_FACTOR_SETUP_REQUIRED]: 'Two-factor authentication setup is required. Please set it up to continue.',
 };
 
 /**

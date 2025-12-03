@@ -38,7 +38,7 @@ export const initializeNetworksOnce = mutation({
             },
             {
                 network: "bsc",
-                name: "BSC",
+                name: "BNB-BSC(BEP20)",
                 chainId: 56,
                 contractAddress: "", // To be filled after deployment
                 usdtAddress: "0x55d398326f99059fF775485246999027B3197955",
@@ -130,8 +130,8 @@ export const createTestAlerts = mutation({
                 type: "deposit_paused" as const,
                 network: "bsc",
                 severity: "warning" as const,
-                title: "BSC Deposits Paused",
-                message: "Deposits have been paused on BSC for maintenance",
+                title: "BNB-BSC(BEP20) Deposits Paused",
+                message: "Deposits have been paused on BNB-BSC(BEP20) for maintenance",
                 isRead: false,
                 createdAt: Date.now() - 3600000,
             },

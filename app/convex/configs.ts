@@ -268,6 +268,101 @@ export const toggleReferralBonuses = mutation({
 });
 
 /**
+ * Toggle 2FA requirement (Admin only)
+ */
+export const toggle2FARequirement = mutation({
+    args: {},
+    handler: async (ctx) => {
+        const existing = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_required"))
+            .first();
+
+        const newState = !existing?.value;
+        const now = Date.now();
+
+        if (existing) {
+            await ctx.db.patch(existing._id, { value: newState });
+        } else {
+            await ctx.db.insert("configs", {
+                key: "two_factor_required",
+                value: newState,
+            });
+        }
+
+        // Store when 2FA requirement was enabled (for grace period calculation)
+        if (newState) {
+            const enabledAtConfig = await ctx.db
+                .query("configs")
+                .withIndex("by_key", (q) => q.eq("key", "two_factor_enabled_at"))
+                .first();
+
+            if (enabledAtConfig) {
+                await ctx.db.patch(enabledAtConfig._id, { value: now });
+            } else {
+                await ctx.db.insert("configs", {
+                    key: "two_factor_enabled_at",
+                    value: now,
+                });
+            }
+
+            // Mark all existing users as required (for grace period tracking)
+            const users = await ctx.db.query("users").collect();
+            for (const user of users) {
+                if (!user.twoFactorRequiredAt && !user.twoFactorEnabled) {
+                    await ctx.db.patch(user._id, {
+                        twoFactorRequiredAt: now,
+                    });
+                }
+            }
+        }
+
+        // Create system notification for all users
+        const users = await ctx.db.query("users").collect();
+        const notificationTime = Date.now();
+
+        for (const user of users) {
+            await ctx.db.insert("notifications", {
+                userId: user._id,
+                type: "system",
+                title: newState ? "🔐 Two-Factor Authentication Required" : "✅ 2FA Requirement Removed",
+                message: newState 
+                    ? "Two-factor authentication is now required for login and withdrawals. Please set it up in Settings. You have 30 days to complete setup."
+                    : "Two-factor authentication is no longer required. You can continue using the app without 2FA.",
+                icon: newState ? "🔐" : "✅",
+                read: false,
+                createdAt: notificationTime,
+            });
+        }
+
+        return { success: true, isRequired: newState };
+    },
+});
+
+/**
+ * Get 2FA requirement status
+ */
+export const get2FARequirement = query({
+    args: {},
+    handler: async (ctx) => {
+        const required = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_required"))
+            .first();
+
+        const enabledAt = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_enabled_at"))
+            .first();
+
+        return {
+            isRequired: required?.value ?? false,
+            enabledAt: enabledAt?.value ?? null,
+        };
+    },
+});
+
+/**
  * Get system pause states
  */
 export const getSystemPauseStates = query({
@@ -288,10 +383,16 @@ export const getSystemPauseStates = query({
             .withIndex("by_key", (q) => q.eq("key", "referral_bonuses_enabled"))
             .first();
 
+        const twoFactorRequired = await ctx.db
+            .query("configs")
+            .withIndex("by_key", (q) => q.eq("key", "two_factor_required"))
+            .first();
+
         return {
             stakingPaused: stakingPaused?.value ?? false,
             withdrawalsPaused: withdrawalsPaused?.value ?? false,
             referralBonusesEnabled: referralBonusesEnabled?.value ?? false,
+            twoFactorRequired: twoFactorRequired?.value ?? false,
         };
     },
 });
