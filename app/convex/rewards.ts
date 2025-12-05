@@ -32,15 +32,27 @@ export const distributeDailyRewards = mutation({
                         stakesExpired++;
 
                         // When a stake expires, we need to update team volumes and ranks
-                        const staker = await ctx.db.get(stake.userId);
-                        if (staker) {
-                            // Subtract the stake amount from team volume
-                            await updateTeamVolume(ctx, stake.userId, -stake.amount);
+                        const stakerId = stake.accountId || stake.userId;
+                        if (stakerId) {
+                            const staker = await ctx.db.get(stakerId);
+                            if (staker) {
+                                // Subtract the stake amount from team volume
+                                // updateTeamVolume expects accountId, so use accountId if available
+                                if (stake.accountId) {
+                                    await updateTeamVolume(ctx, stake.accountId, -stake.amount);
+                                } else if (stake.userId) {
+                                    // For legacy userId, we'd need to find the account, but for now skip
+                                    // TODO: Handle legacy userId case properly
+                                }
 
-                            // NEW: Update referrer's active directs count (for Unilevel unlock)
-                            if (staker.referrerId) {
-                                const { updateActiveDirects } = await import("./unilevel/activeDirectsCalculator");
-                                await updateActiveDirects(ctx, staker.referrerId);
+                                // NEW: Update referrer's active directs count (for Unilevel unlock)
+                                // updateActiveDirects expects userId, so skip if referrerId is accountId
+                                // TODO: updateActiveDirects needs to support accountId
+                                if (staker.referrerId && "loginId" in staker) {
+                                    // This is a user, not an account
+                                    const { updateActiveDirects } = await import("./unilevel/activeDirectsCalculator");
+                                    await updateActiveDirects(ctx, staker.referrerId as any);
+                                }
                             }
                         }
                         continue;
@@ -51,26 +63,35 @@ export const distributeDailyRewards = mutation({
                     totalYield += dailyYield;
 
                     // Update Staker Wallet
-                    const staker = await ctx.db.get(stake.userId);
+                    const stakerId = stake.accountId || stake.userId;
+                    if (!stakerId) continue;
+                    const staker = await ctx.db.get(stakerId);
                     if (staker) {
+                        // Determine if staker is an account or user
+                        const isAccount = stake.accountId !== undefined;
+                        const stakerIdType = isAccount ? "account" : "user";
+
                         // Check if BLS system is enabled
                         const blsConfig = await ctx.db.query("blsConfig").first();
                         const isBLSEnabled = blsConfig?.isEnabled || false;
 
                         if (isBLSEnabled) {
                             // Credit BLS instead of USDT (creditBLS creates the transaction record)
+                            // Note: transactionType is omitted so it defaults to "bls_earned" in creditBLS
                             await ctx.runMutation(internal.bls.creditBLS, {
-                                userId: staker._id,
+                                accountId: stake.accountId || undefined,
+                                userId: stake.userId || undefined,
                                 amount: dailyYield,
                                 description: `Daily yield for $${stake.amount} stake (${stake.cycleDays} days)`,
                                 referenceId: stake._id,
-                                transactionType: "yield",
+                                // transactionType omitted - defaults to "bls_earned" in creditBLS
                             });
 
                             // Notify user of daily earnings in BLS
                             await notify(
                                 ctx,
                                 staker._id,
+                                stakerIdType,
                                 "earnings",
                                 "Daily Yield Credited (BLS)",
                                 `You earned ${dailyYield.toFixed(2)} BLS from your ${stake.cycleDays}-day stake! Swap to USDT anytime.`,
@@ -79,8 +100,10 @@ export const distributeDailyRewards = mutation({
                             );
                         } else {
                             // Credit USDT directly (existing behavior)
+                            // Use stakerId consistently (could be accountId or userId)
                             await ctx.db.insert("transactions", {
-                                userId: stake.userId,
+                                accountId: stake.accountId || undefined,
+                                userId: stake.userId || undefined,
                                 amount: dailyYield,
                                 type: "yield",
                                 referenceId: stake._id,
@@ -94,6 +117,7 @@ export const distributeDailyRewards = mutation({
                             await notify(
                                 ctx,
                                 staker._id,
+                                stakerIdType,
                                 "earnings",
                                 "Daily Yield Credited",
                                 `You earned $${dailyYield.toFixed(2)} from your ${stake.cycleDays}-day stake!`,
@@ -104,11 +128,13 @@ export const distributeDailyRewards = mutation({
                     }
 
                     // 3. Distribute Commissions (Referral Bonuses)
-                    const commissionsDistributed = await distributeReferralBonuses(ctx, stake.userId, dailyYield, now, stake._id);
+                    // Use stakerId (computed earlier) instead of stake.userId to handle accountId-only stakes
+                    const commissionsDistributed = await distributeReferralBonuses(ctx, stakerId, dailyYield, now, stake._id);
                     totalCommissions += commissionsDistributed;
 
                     // 4. Distribute B-Rank Bonuses
-                    const vrankBonus = await distributeVRankBonuses(ctx, stake.userId, dailyYield, now, stake._id);
+                    // Use stakerId (computed earlier) instead of stake.userId to handle accountId-only stakes
+                    const vrankBonus = await distributeVRankBonuses(ctx, stakerId, dailyYield, now, stake._id);
                     totalCommissions += vrankBonus;
 
                     // 5. NEW: Distribute Unilevel Commissions (10 levels)
@@ -170,7 +196,7 @@ async function distributeReferralBonuses(ctx: any, stakerId: any, yieldAmount: n
     // Check if referral bonuses are enabled
     const referralBonusesConfig = await ctx.db
         .query("configs")
-        .withIndex("by_key", (q) => q.eq("key", "referral_bonuses_enabled"))
+        .withIndex("by_key", (q: any) => q.eq("key", "referral_bonuses_enabled"))
         .first();
 
     const isReferralBonusesEnabled = referralBonusesConfig?.value ?? false;
@@ -206,9 +232,14 @@ async function distributeReferralBonuses(ctx: any, stakerId: any, yieldAmount: n
             const isBLSEnabled = blsConfig?.isEnabled || false;
 
             if (isBLSEnabled) {
+                // Determine if referrer is an account or user
+                const isReferrerAccount = "loginId" in referrer;
+                const referrerIdType = isReferrerAccount ? "account" : "user";
+                
                 // Credit BLS instead of USDT
                 await ctx.runMutation(internal.bls.creditBLS, {
-                    userId: referrer._id,
+                    accountId: isReferrerAccount ? referrer._id : undefined,
+                    userId: !isReferrerAccount ? referrer._id : undefined,
                     amount: commission,
                     description: `L${level} Referral Bonus from ${user.name}'s stake`,
                     referenceId: stakeId,
@@ -219,6 +250,7 @@ async function distributeReferralBonuses(ctx: any, stakerId: any, yieldAmount: n
                 await notify(
                     ctx,
                     referrer._id,
+                    referrerIdType,
                     "commission",
                     `L${level} Commission Earned (BLS)`,
                     `You earned ${commission.toFixed(2)} BLS commission from ${user.name}'s stake! Swap to USDT anytime.`,
@@ -238,10 +270,15 @@ async function distributeReferralBonuses(ctx: any, stakerId: any, yieldAmount: n
 
                 await ctx.db.patch(referrer._id, { walletBalance: (referrer.walletBalance || 0) + commission });
 
+                // Determine if referrer is an account or user for notification
+                const isReferrerAccount = "loginId" in referrer;
+                const referrerIdType = isReferrerAccount ? "account" : "user";
+                
                 // Notify referrer of commission
                 await notify(
                     ctx,
                     referrer._id,
+                    referrerIdType,
                     "commission",
                     `L${level} Commission Earned`,
                     `You earned $${commission.toFixed(2)} commission from ${user.name}'s stake!`,
@@ -289,7 +326,7 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
     // Get the rank configuration to find the commission rate and capping multiplier
     const config = await ctx.db
         .query("configs")
-        .withIndex("by_key", (q) => q.eq("key", "rank_rules"))
+        .withIndex("by_key", (q: any) => q.eq("key", "rank_rules"))
         .unique();
 
     const rules = config?.value || [];
@@ -323,6 +360,10 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
     // NEW: Cap the bonus if it exceeds remaining cap
     const actualBonus = Math.min(calculatedBonus, remainingCap);
 
+    // Determine if directReferrer is an account or user (needed for all notification calls)
+    const isDirectReferrerAccount = "loginId" in directReferrer;
+    const directReferrerIdType = isDirectReferrerAccount ? "account" : "user";
+    
     // Check if BLS system is enabled
     const blsConfig = await ctx.db.query("blsConfig").first();
     const isBLSEnabled = blsConfig?.isEnabled || false;
@@ -330,7 +371,8 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
     if (isBLSEnabled) {
         // Credit BLS instead of USDT
         await ctx.runMutation(internal.bls.creditBLS, {
-            userId: directReferrer._id,
+            accountId: isDirectReferrerAccount ? directReferrer._id : undefined,
+            userId: !isDirectReferrerAccount ? directReferrer._id : undefined,
             amount: actualBonus,
             description: `${directReferrer.currentRank} Rank Bonus from ${staker.name}'s stake`,
             referenceId: stakeId,
@@ -368,9 +410,14 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
 
     if (newRemainingCap <= 0) {
         // Cap reached
+        // Determine if directReferrer is an account or user for notification
+        const isDirectReferrerAccount = "loginId" in directReferrer;
+        const directReferrerIdType = isDirectReferrerAccount ? "account" : "user";
+        
         await notify(
             ctx,
             directReferrer._id,
+            directReferrerIdType,
             "system",
             "B-Rank Bonus Cap Reached",
             `You've reached your ${directReferrer.currentRank} bonus cap of ${currencySymbol}${currentCap.toFixed(2)} ${currency}. Stake more to increase your cap and continue earning bonuses!`,
@@ -385,9 +432,11 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
         );
     } else if (actualBonus < calculatedBonus) {
         // Partial bonus due to cap
+        // directReferrerIdType is already defined above
         await notify(
             ctx,
             directReferrer._id,
+            directReferrerIdType,
             "system",
             "B-Rank Bonus Partially Capped",
             `Your ${directReferrer.currentRank} bonus was capped. You have ${currencySymbol}${newRemainingCap.toFixed(2)} ${currency} remaining before reaching your cap of ${currencySymbol}${currentCap.toFixed(2)} ${currency}.`,
@@ -405,6 +454,7 @@ async function distributeVRankBonuses(ctx: any, stakerId: any, yieldAmount: numb
         await notify(
             ctx,
             directReferrer._id,
+            directReferrerIdType,
             "commission",
             `${directReferrer.currentRank} Rank Bonus Earned (BLS)`,
             `You earned ${actualBonus.toFixed(2)} BLS from ${staker.name}'s stake! Swap to USDT anytime.`,

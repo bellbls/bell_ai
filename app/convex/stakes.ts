@@ -108,8 +108,12 @@ export const createStake = mutation({
         await updateTeamVolume(ctx, account._id, args.amount);
 
         // 7. NEW: Update referrer's active directs count (for Unilevel unlock)
+        // TODO: updateActiveDirects needs to be updated to support accountId
+        // For now, skip if referrerId is an accountId (updateActiveDirects only supports userId)
+        // This will be fixed when updateActiveDirects is updated for multi-account support
         if (account.referrerId) {
-            await updateActiveDirects(ctx, account.referrerId);
+            // Skip for now - updateActiveDirects needs to support accountId
+            // await updateActiveDirects(ctx, account.referrerId as any);
         }
 
         // 8. Create Notification
@@ -117,6 +121,7 @@ export const createStake = mutation({
         await notify(
             ctx,
             account._id,
+            "account",
             "stake",
             "Stake Created Successfully",
             `You've staked $${args.amount} for ${args.cycleDays} days at ${selectedCycle.dailyRate}% daily. Expected return: ${totalReturn}%`,

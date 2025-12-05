@@ -1,5 +1,6 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 import { createError, ErrorCodes, isValidAmount } from "./errors";
 import { notify } from "./notifications";
 
@@ -187,44 +188,60 @@ export const updateBLSConfig = mutation({
 // ==================== BALANCE MANAGEMENT ====================
 
 /**
- * Get user's BLS balance
+ * Get user's or account's BLS balance
+ * Supports both accountId and userId for multi-account migration
  */
 export const getBLSBalance = query({
     args: { 
-        userId: v.optional(v.id("users")),
-        accountId: v.optional(v.id("accounts")),
+        accountId: v.optional(v.union(v.id("accounts"), v.id("users"))), // Can be either for multi-account migration
+        userId: v.optional(v.id("users")),  // Legacy support
     },
     handler: async (ctx, args) => {
-        if (args.accountId) {
-            const account = await ctx.db.get(args.accountId);
-            if (!account) {
-                throw createError(ErrorCodes.USER_NOT_FOUND);
-            }
-
-            return {
-                blsBalance: account.blsBalance || 0,
-            };
-        } else if (args.userId) {
-            // Legacy: query by userId
-            const user = await ctx.db.get(args.userId);
-            if (!user) {
-                throw createError(ErrorCodes.USER_NOT_FOUND);
-            }
-
-            return {
-                blsBalance: user.blsBalance || 0,
-            };
+        const targetId = args.accountId || args.userId;
+        if (!targetId) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Either accountId or userId must be provided");
         }
-        return { blsBalance: 0 };
+
+        // Try to determine if it's an account or user by checking which table it belongs to
+        let account: any = null;
+        let isAccount = false;
+        
+        try {
+            account = await ctx.db.get(targetId as any);
+            if (account && "loginId" in account) {
+                isAccount = true; // Accounts have loginId field
+            }
+        } catch {
+            // If get fails, try as user
+        }
+
+        // If we didn't find it as an account, try as user
+        if (!account || !isAccount) {
+            try {
+                account = await ctx.db.get(targetId as any);
+            } catch {
+                // Still not found
+            }
+        }
+
+        if (!account) {
+            throw createError(ErrorCodes.USER_NOT_FOUND);
+        }
+
+        return {
+            blsBalance: account.blsBalance || 0,
+        };
     },
 });
 
 /**
- * Credit BLS to user balance (Internal function)
+ * Credit BLS to user or account balance (Internal function)
+ * Supports both accountId and userId for multi-account migration
  */
 export const creditBLS = internalMutation({
     args: {
-        userId: v.id("users"),
+        accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
         amount: v.number(),
         description: v.string(),
         referenceId: v.optional(v.string()),
@@ -235,14 +252,34 @@ export const creditBLS = internalMutation({
             throw createError(ErrorCodes.VALIDATION_ERROR, "BLS amount must be greater than 0");
         }
 
-        const user = await ctx.db.get(args.userId);
-        if (!user) {
+        const targetId = args.accountId || args.userId;
+        if (!targetId) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Either accountId or userId must be provided");
+        }
+
+        // Try to get as account first, then user
+        let account: any = null;
+        if (args.accountId) {
+            account = await ctx.db.get(args.accountId);
+            if (account && !("loginId" in account)) {
+                account = null; // Not an account
+            }
+        }
+
+        if (!account && args.userId) {
+            // Try as user
+            account = await ctx.db.get(args.userId);
+        }
+
+        if (!account) {
             throw createError(ErrorCodes.USER_NOT_FOUND);
         }
 
-        const newBalance = (user.blsBalance || 0) + args.amount;
+        // Check if account has blsBalance field (accounts and users both have it)
+        const currentBalance = account.blsBalance || 0;
+        const newBalance = currentBalance + args.amount;
 
-        await ctx.db.patch(args.userId, {
+        await ctx.db.patch(targetId, {
             blsBalance: newBalance,
         });
 
@@ -250,7 +287,8 @@ export const creditBLS = internalMutation({
         // This ensures earnings are properly categorized for the earnings page
         const transactionType = args.transactionType || "bls_earned";
         await ctx.db.insert("transactions", {
-            userId: args.userId,
+            accountId: args.accountId || undefined,
+            userId: args.userId || undefined,  // Keep for backward compatibility
             amount: args.amount,
             type: transactionType as any, // Use the provided type so earnings page can categorize correctly
             referenceId: args.referenceId,
@@ -299,6 +337,7 @@ export const deductBLS = internalMutation({
 
 /**
  * Swap BLS to USDT
+ * Supports both accountId and userId for multi-account migration
  */
 export const swapBLSToUSDT = mutation({
     args: {
@@ -310,6 +349,11 @@ export const swapBLSToUSDT = mutation({
         // Validate amount
         if (!isValidAmount(args.blsAmount, 0)) {
             throw createError(ErrorCodes.VALIDATION_ERROR, "Swap amount must be greater than 0");
+        }
+
+        const targetId = args.accountId || args.userId;
+        if (!targetId) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Either accountId or userId must be provided");
         }
 
         // Check if BLS system is enabled
@@ -329,40 +373,21 @@ export const swapBLSToUSDT = mutation({
             );
         }
 
-        // Get account or user
-        let account = null;
-        let targetId: Id<"accounts"> | Id<"users"> | null = null;
-        
+        // Try to get as account first, then user
+        let account: any = null;
         if (args.accountId) {
             account = await ctx.db.get(args.accountId);
-            targetId = args.accountId;
-        } else if (args.userId) {
-            // Legacy: get user and find account
-            const user = await ctx.db.get(args.userId);
-            if (user) {
-                const login = await ctx.db
-                    .query("logins")
-                    .withIndex("by_email", (q) => q.eq("email", user.email))
-                    .first();
-                if (login) {
-                    account = await ctx.db
-                        .query("accounts")
-                        .withIndex("by_loginId", (q) => q.eq("loginId", login._id))
-                        .filter((q) => q.eq(q.field("isDefault"), true))
-                        .first();
-                    if (account) {
-                        targetId = account._id;
-                    }
-                }
-                // Fallback to user if no account found
-                if (!account) {
-                    account = user as any;
-                    targetId = args.userId;
-                }
+            if (account && !("loginId" in account)) {
+                account = null; // Not an account
             }
         }
 
-        if (!account || !targetId) {
+        if (!account && args.userId) {
+            // Try as user
+            account = await ctx.db.get(args.userId);
+        }
+
+        if (!account) {
             throw createError(ErrorCodes.USER_NOT_FOUND);
         }
 
@@ -386,29 +411,18 @@ export const swapBLSToUSDT = mutation({
 
         // Determine if we're working with account or user
         const isAccount = args.accountId !== undefined;
-        
+        const idType = isAccount ? "account" : "user";
+
         // Deduct BLS
-        if (isAccount && args.accountId) {
-            await ctx.db.patch(args.accountId, {
-                blsBalance: currentBLSBalance - args.blsAmount,
-            });
-        } else if (args.userId) {
-            await ctx.db.patch(args.userId, {
-                blsBalance: currentBLSBalance - args.blsAmount,
-            });
-        }
+        await ctx.db.patch(targetId, {
+            blsBalance: currentBLSBalance - args.blsAmount,
+        });
 
         // Credit USDT
         const newUSDTBalance = (account.walletBalance || 0) + usdtAmount;
-        if (isAccount && args.accountId) {
-            await ctx.db.patch(args.accountId, {
-                walletBalance: newUSDTBalance,
-            });
-        } else if (args.userId) {
-            await ctx.db.patch(args.userId, {
-                walletBalance: newUSDTBalance,
-            });
-        }
+        await ctx.db.patch(targetId, {
+            walletBalance: newUSDTBalance,
+        });
 
         // Create swap request record
         const swapRequestId = await ctx.db.insert("blsSwapRequests", {
@@ -446,23 +460,21 @@ export const swapBLSToUSDT = mutation({
             timestamp: Date.now(),
         });
 
-        // Notify user (use accountId if available, otherwise userId)
-        const notifyId = args.accountId || args.userId;
-        if (notifyId) {
-            await notify(
-                ctx,
-                notifyId,
-                "earnings",
-                "BLS Swap Completed",
-                `You successfully swapped ${args.blsAmount.toFixed(2)} BLS to ${usdtAmount.toFixed(2)} USDT`,
-                "ArrowRightLeft",
-                {
-                    blsAmount: args.blsAmount,
-                    usdtAmount: usdtAmount,
-                    swapRequestId: swapRequestId,
-                }
-            );
-        }
+        // Notify user or account
+        await notify(
+            ctx,
+            targetId,
+            idType,
+            "earnings",
+            "BLS Swap Completed",
+            `You successfully swapped ${args.blsAmount.toFixed(2)} BLS to ${usdtAmount.toFixed(2)} USDT`,
+            "ArrowRightLeft",
+            {
+                blsAmount: args.blsAmount,
+                usdtAmount: usdtAmount,
+                swapRequestId: swapRequestId,
+            }
+        );
 
         return {
             success: true,
@@ -477,31 +489,38 @@ export const swapBLSToUSDT = mutation({
 });
 
 /**
- * Get user's swap history
+ * Get user's or account's swap history
+ * Supports both accountId and userId for multi-account migration
  */
 export const getSwapHistory = query({
     args: { 
-        userId: v.optional(v.id("users")),
         accountId: v.optional(v.id("accounts")),
+        userId: v.optional(v.id("users")),  // Legacy support
     },
     handler: async (ctx, args) => {
+        const targetId = args.accountId || args.userId;
+        if (!targetId) {
+            throw createError(ErrorCodes.VALIDATION_ERROR, "Either accountId or userId must be provided");
+        }
+
+        let swaps: any[] = [];
         if (args.accountId) {
-            const swaps = await ctx.db
+            // Query by accountId
+            swaps = await ctx.db
                 .query("blsSwapRequests")
                 .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
                 .order("desc")
                 .collect();
-            return swaps;
         } else if (args.userId) {
-            // Legacy: query by userId
-            const swaps = await ctx.db
+            // Query by userId (legacy)
+            swaps = await ctx.db
                 .query("blsSwapRequests")
                 .withIndex("by_userId", (q) => q.eq("userId", args.userId))
                 .order("desc")
                 .collect();
-            return swaps;
         }
-        return [];
+
+        return swaps;
     },
 });
 
@@ -574,4 +593,3 @@ export const getBLSStats = query({
         };
     },
 });
-

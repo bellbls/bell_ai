@@ -210,6 +210,7 @@ export const register = mutation({
         await notify(
             ctx,
             accountId,
+            "account",
             "system",
             "Welcome to BellAi!",
             `Your account has been created successfully. Your referral code is: ${newReferralCode}`,
@@ -1003,22 +1004,59 @@ export const updateUserBalance = mutation({
 export const getUserEarnings = query({
     args: { 
         userId: v.optional(v.id("users")),
-        accountId: v.optional(v.id("accounts")),
+        accountId: v.optional(v.union(v.id("accounts"), v.id("users"))), // Can be either for multi-account migration
     },
     handler: async (ctx, args) => {
         // Get all transactions for this account/user
+        // Handle case where accountId might actually be a userId (from activeAccountId fallback)
         let transactions = [];
-        if (args.accountId) {
+        const targetId = args.accountId || args.userId;
+        
+        if (!targetId) {
+            // Return empty earnings if no ID provided
+            return {
+                summary: {
+                    totalYield: 0,
+                    totalDirectCommissions: 0,
+                    totalIndirectCommissions: 0,
+                    totalUnilevelCommissions: 0,
+                    totalVRankBonuses: 0,
+                    totalEarnings: 0,
+                },
+                recent: {
+                    yield: [],
+                    directCommissions: [],
+                    indirectCommissions: [],
+                    unilevelCommissions: [],
+                    vrankBonuses: [],
+                },
+            };
+        }
+
+        // Try to determine if it's an account or user by checking which table it belongs to
+        let isAccount = false;
+        try {
+            const account = await ctx.db.get(targetId as any);
+            if (account && "loginId" in account) {
+                isAccount = true; // Accounts have loginId field
+            }
+        } catch {
+            // If get fails, it might be a userId
+        }
+
+        // Query transactions by the appropriate index
+        if (isAccount) {
+            // Query by accountId
             transactions = await ctx.db
                 .query("transactions")
-                .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+                .withIndex("by_accountId", (q) => q.eq("accountId", targetId as any))
                 .order("desc")
                 .collect();
-        } else if (args.userId) {
-            // Legacy: query by userId
+        } else {
+            // Query by userId (legacy or when activeAccountId is actually a userId)
             transactions = await ctx.db
                 .query("transactions")
-                .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+                .withIndex("by_userId", (q) => q.eq("userId", targetId as any))
                 .order("desc")
                 .collect();
         }

@@ -6,11 +6,11 @@ import { Id } from "../convex/_generated/dataModel";
 import { Award, TrendingUp, AlertCircle } from "lucide-react";
 
 interface BRankCapCardProps {
-    userId: Id<"users">;
+    accountId: Id<"accounts"> | Id<"users">;
 }
 
-export function BRankCapCard({ userId }: BRankCapCardProps) {
-    const capInfo = useCachedQuery(api.rankQueries.getBRankCapInfo, { userId });
+export function BRankCapCard({ accountId }: BRankCapCardProps) {
+    const capInfo = useCachedQuery(api.rankQueries.getBRankCapInfo, { accountId });
 
     if (!capInfo) {
         return (

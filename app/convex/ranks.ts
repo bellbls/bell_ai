@@ -130,6 +130,7 @@ export async function updateRank(ctx: MutationCtx, accountId: Id<"accounts">) {
         await notify(
             ctx,
             accountId,
+            "account",
             "rank",
             isUpgrade ? "Rank Advancement!" : "Rank Update",
             isUpgrade

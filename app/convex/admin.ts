@@ -1325,6 +1325,7 @@ export const convertAllOrders = mutation({
             await notify(
                 ctx,
                 userId,
+                "user",
                 "stake",
                 "🎉 Your Nodes Have Been Converted!",
                 `Great news! Your ${stakeInfo.stakeIds.length} presale node(s) have been automatically converted into a 1-year staking position worth $${stakeInfo.totalAmount.toFixed(2)}. You can now start earning daily rewards and bonuses!`,

@@ -40,20 +40,22 @@ export const getDetailedYieldPayoutReport = query({
                 .collect();
         } else {
             // Query all transactions by type
-            yieldTransactions = await ctx.db
+            const yieldTx = await ctx.db
                 .query("transactions")
                 .withIndex("by_type", (q) => q.eq("type", "yield"))
                 .order("desc")
                 .collect();
             
-            // Also get BLS transactions if needed
+            // Only include BLS transactions if includeBLS is true
             if (includeBLS) {
-                const blsTransactions = await ctx.db
+                const blsTx = await ctx.db
                     .query("transactions")
                     .withIndex("by_type", (q) => q.eq("type", "bls_earned"))
                     .order("desc")
                     .collect();
-                yieldTransactions = [...yieldTransactions, ...blsTransactions];
+                yieldTransactions = [...yieldTx, ...blsTx];
+            } else {
+                yieldTransactions = yieldTx;
             }
         }
 

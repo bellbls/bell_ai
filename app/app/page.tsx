@@ -667,8 +667,8 @@ function HomeContent() {
               <CryptoPriceTicker />
 
               {/* B-Rank Cap Information */}
-              {userId && userProfile?.currentRank !== "B0" && (
-                <BRankCapCard userId={userId} />
+              {activeAccountId && userProfile?.currentRank !== "B0" && (
+                <BRankCapCard accountId={activeAccountId} />
               )}
             </>
           )}

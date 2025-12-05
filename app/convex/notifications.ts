@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 
 // Create a new notification
 export const createNotification = mutation({
@@ -107,31 +108,19 @@ export const deleteNotification = mutation({
 });
 
 // Helper function to create notification (can be called from other mutations)
-// Updated to support both accountId and userId for multi-account migration
 export const notify = async (
     ctx: any,
-    accountIdOrUserId: any,  // Can be accountId or userId (for backward compatibility)
+    id: Id<"accounts"> | Id<"users">,
+    idType: "account" | "user",
     type: string,
     title: string,
     message: string,
     icon: string,
     data?: any
 ) => {
-    // Try to determine if it's an accountId or userId by checking which table it belongs to
-    // Try account first (new system)
-    let isAccount = false;
-    try {
-        const account = await ctx.db.get(accountIdOrUserId as any);
-        if (account && "loginId" in account) {
-            isAccount = true;  // Accounts have loginId field
-        }
-    } catch {
-        // If get fails, it might be a userId
-    }
-    
     await ctx.db.insert("notifications", {
-        accountId: isAccount ? accountIdOrUserId : undefined,
-        userId: !isAccount ? accountIdOrUserId : undefined,  // Keep for backward compatibility
+        accountId: idType === "account" ? (id as Id<"accounts">) : undefined,
+        userId: idType === "user" ? (id as Id<"users">) : undefined,
         type,
         title,
         message,
